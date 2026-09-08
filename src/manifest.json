@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "HandsFree for Chrome",
+  "short_name": "HandsFree",
+  "version": "1.0.0",
+  "minimum_chrome_version": "120",
+  "description": "Control tabs, bookmarks, windows, and search with your voice. Local command interpretation, optional on-device AI.",
+  "permissions": ["tabs", "bookmarks", "offscreen", "storage", "alarms", "activeTab", "scripting"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "src/popup/popup.html", "default_title": "HandsFree for Chrome", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } },
+  "options_ui": { "page": "src/popup/popup.html?settings=1", "open_in_tab": true },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "commands": {
+    "toggle-listening": {
+      "suggested_key": { "default": "Ctrl+Shift+Space", "mac": "Command+Shift+Space" },
+      "description": "Start or cancel a voice command"
+    }
+  },
+  "content_security_policy": { "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self';" },
+  "cross_origin_embedder_policy": { "value": "require-corp" },
+  "cross_origin_opener_policy": { "value": "same-origin" }
+}

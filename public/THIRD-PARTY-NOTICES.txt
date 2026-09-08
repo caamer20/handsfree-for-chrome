@@ -1,0 +1,28 @@
+HandsFree for Chrome
+Copyright 2026 HandsFree for Chrome contributors.
+Independent project; not affiliated with Google.
+
+This distribution contains:
+
+Transformers.js 3.x, Hugging Face
+https://github.com/huggingface/transformers.js
+Apache License 2.0; see LICENSE.txt.
+
+SmolLM2-135M-Instruct, HuggingFaceTB
+https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct
+Apache License 2.0; see LICENSE.txt.
+The immutable revision and SHA-256 hashes are in models/smollm2-135m-quant/provenance.json.
+
+ONNX Runtime Web, Microsoft
+https://github.com/microsoft/onnxruntime
+MIT License; see ONNX-RUNTIME-LICENSE.txt.
+
+Zod, Colin McDonnell
+https://github.com/colinhacks/zod
+MIT License; see ZOD-LICENSE.txt.
+
+The browser bundle excludes the Node.js-only sharp image-processing backend.
+An override to sharp 0.35.4 addresses its transitive development/runtime audit findings.
+
+The HandsFree icon was generated with an AI image-generation tool.
+Its generation prompt is provided in the source repository's assets/ICON-PROMPT.md.

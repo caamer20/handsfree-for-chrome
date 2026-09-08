@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HandsFree for Chrome</title></head>
+<body>
+  <div class="app-shell">
+    <header class="brand"><img src="/icons/icon-48.png" width="38" height="38" alt=""><div><h1>HandsFree<span>for Chrome</span></h1></div><span class="version">1.0</span></header>
+    <nav class="tabs" aria-label="Main navigation"><button class="tab active" data-pane="control" aria-current="page">Control</button><button class="tab" data-pane="commands">Commands</button><button class="tab" data-pane="settings">Settings</button></nav>
+    <main>
+      <section id="control" class="pane">
+        <div class="voice-card" id="voice-card"><div class="status-line"><span class="status-dot"></span><span id="status-label">READY WHEN YOU ARE</span></div>
+          <div class="mic-orbit" aria-hidden="true"><div class="mic-circle"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg></div></div>
+          <h2 id="hero-title">Your browser.<br>At your word.</h2><p id="status-text" aria-live="polite">Say what you want to do. We’ll take it from here.</p>
+          <button id="listen" class="primary wide">Start listening <span aria-hidden="true">↗</span></button>
+          <p class="shortcut-hint">or press <kbd id="shortcut">⌘ ⇧ Space</kbd></p>
+        </div>
+        <div id="review" class="review" hidden><div class="eyebrow">REVIEW COMMAND</div><h3>Here’s what will happen</h3><ol id="plan-list"></ol><div class="button-row"><button id="approve" class="primary">Run command</button><button id="dismiss" class="secondary">Dismiss</button></div></div>
+        <form id="command-form" class="command-form"><label for="command">Prefer to type?</label><div class="input-row"><input id="command" name="command" maxlength="500" placeholder="Try “open a new tab”" autocomplete="off" required><button id="run-text" class="send-button" aria-label="Run typed command" title="Run typed command">↵</button></div></form>
+        <div class="section-heading"><h3>Recent activity</h3><button id="clear-log" class="text-button">Clear</button></div>
+        <ol id="activity" class="activity"></ol><p id="empty-log" class="empty-state">A quieter way to get things done.<br>Your completed commands will appear here.</p>
+      </section>
+      <section id="commands" class="pane" hidden><div class="pane-heading"><span class="eyebrow">A FEW WORDS GO A LONG WAY</span><h2>Just say the word.</h2><p>Choose an example to try it. Edit the words to make it yours.</p></div><label class="sr-only" for="filter">Filter commands</label><input id="filter" class="filter" placeholder="Find a command…"><div id="examples"></div><p class="fine-print">Join simple commands with “then”. AI interpretations and closing several tabs ask you to review first.</p></section>
+      <section id="settings" class="pane" hidden><div class="pane-heading"><span class="eyebrow">MAKE YOURSELF COMFORTABLE</span><h2>Your kind of hands-free.</h2></div>
+        <form id="settings-form">
+          <div class="setting"><label for="mode">Memory &amp; power</label><select id="mode"><option value="power-saver">Power Saver · sleep after 3 minutes</option><option value="standby">Standby · keep the engine ready</option></select><p>Power Saver releases audio and model memory. Your next command wakes the engine.</p></div>
+          <div class="setting"><label for="trigger">Optional trigger phrase</label><input id="trigger" maxlength="40" placeholder="e.g. Hey HandsFree"><p>Say this before your command after pressing the shortcut. The microphone stays off between commands.</p></div>
+          <div class="setting"><label for="language">Speech language</label><select id="language"><option value="en-US">English · United States</option><option value="en-GB">English · United Kingdom</option><option value="en-AU">English · Australia</option><option value="en-CA">English · Canada</option></select></div>
+          <label class="toggle-row"><span><strong>Local AI · experimental</strong><small>Try flexible phrasing with SmolLM2. It can misinterpret requests; every AI plan needs your review.</small></span><input id="ai" type="checkbox" role="switch"></label>
+          <label class="toggle-row"><span><strong>Save command transcripts</strong><small>Off by default. Keep up to 30 locally; turning off removes saved transcripts.</small></span><input id="save-transcripts" type="checkbox" role="switch"></label>
+          <button class="primary wide" type="submit">Save preferences</button><p id="saved" class="saved" role="status"></p>
+        </form>
+        <div class="utility-actions"><button id="microphone-setup" class="secondary">Microphone setup</button><button id="change-shortcut" class="secondary">Change shortcut ↗</button><button id="sleep" class="text-button">Release engine memory now</button></div>
+        <div class="privacy-note"><strong>A note on privacy</strong><p>Command interpretation runs on your device. Chrome’s speech service may send audio to Google for transcription and require internet. No analytics, accounts, or API keys.</p></div>
+      </section>
+      <p id="error" class="error-message" role="alert" hidden></p>
+    </main>
+    <footer><span class="footer-dot"></span> Local command processing <span class="footer-right" id="engine-state">Engine asleep</span></footer>
+  </div><script type="module" src="./popup.ts"></script>
+</body></html>

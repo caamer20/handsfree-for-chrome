@@ -1,0 +1,15 @@
+@tailwind utilities;
+:host { all: initial; position: fixed; right: 24px; bottom: 24px; z-index: 2147483647; pointer-events: none; color-scheme: light; }
+* { box-sizing: border-box; }
+.pill { display: flex; align-items: center; gap: 12px; max-width: 380px; padding: 13px 18px 13px 13px; border: 1px solid #dbe8e2; border-radius: 18px; background: #fffffff5; box-shadow: 0 8px 40px #15352a26; color: #193a34; font: 500 13px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; transition: opacity .2s, transform .2s; opacity: 0; transform: translateY(12px); }
+.pill.visible { opacity: 1; transform: translateY(0); }
+.symbol { flex: 0 0 32px; width: 32px; height: 32px; border-radius: 11px; display: flex; align-items: center; justify-content: center; gap: 3px; background: #e1f3eb; color: #167369; font-size: 18px; }
+.bar { width: 3px; height: 12px; background: #188375; border-radius: 4px; animation: voice .7s ease-in-out infinite alternate; }
+.bar:nth-child(2) { height: 19px; animation-delay: -.3s; } .bar:nth-child(3) { animation-delay: -.5s; }
+.thinking .symbol { animation: breathe 1s infinite alternate; }
+.error .symbol { color: #af503b; background: #fae9df; }
+.label { display: block; margin-bottom: 1px; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: #769087; }
+.copy { overflow-wrap: anywhere; }
+@keyframes voice { to { transform: scaleY(.35); } } @keyframes breathe { to { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+@media (max-width: 480px) { :host { right: 12px; bottom: 12px; } .pill { max-width: calc(100vw - 24px); } }
