@@ -24,9 +24,9 @@ export class FloatingHud {
     this.symbol.replaceChildren();
     if (state.phase === 'listening') {
       for (let i = 0; i < 3; i++) { const bar = document.createElement('span'); bar.className = 'bar'; this.symbol.append(bar); }
-    } else this.symbol.textContent = state.phase === 'success' ? '✓' : state.phase === 'error' ? '!' : state.phase === 'review' ? '?' : '•••';
+    } else this.symbol.textContent = state.phase === 'success' ? '✓' : state.phase === 'error' ? '!' : ['review', 'clarify'].includes(state.phase) ? '?' : '•••';
     this.pill.className = `pill visible ${state.phase}`;
-    if (!['listening', 'thinking'].includes(state.phase)) this.timer = setTimeout(() => { this.pill.classList.remove('visible'); }, state.phase === 'success' || state.phase === 'idle' ? 2000 : 5000);
+    if (!['listening', 'thinking', 'review', 'clarify'].includes(state.phase)) this.timer = setTimeout(() => { this.pill.classList.remove('visible'); }, state.phase === 'success' || state.phase === 'idle' ? 2000 : 5000);
   }
   destroy(): void { clearTimeout(this.timer); this.host.remove(); }
 }

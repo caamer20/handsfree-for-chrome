@@ -2,8 +2,8 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HandsFree for Chrome</title></head>
 <body>
   <div class="app-shell">
-    <header class="brand"><img src="/icons/icon-48.png" width="38" height="38" alt=""><div><h1>HandsFree<span>for Chrome</span></h1></div><span class="version">1.0</span></header>
-    <nav class="tabs" aria-label="Main navigation"><button class="tab active" data-pane="control" aria-current="page">Control</button><button class="tab" data-pane="commands">Commands</button><button class="tab" data-pane="settings">Settings</button></nav>
+    <header class="brand"><img src="/icons/icon-48.png" width="38" height="38" alt=""><div><h1>HandsFree<span>for Chrome</span></h1></div><span class="version">1.7</span></header>
+    <nav class="tabs" aria-label="Main navigation"><button class="tab active" data-pane="control" aria-current="page">Control</button><button class="tab" data-pane="commands">Commands</button><button class="tab" data-pane="library">Library</button><button class="tab" data-pane="settings">Settings</button></nav>
     <main>
       <section id="control" class="pane">
         <div class="voice-card" id="voice-card"><div class="status-line"><span class="status-dot"></span><span id="status-label">READY WHEN YOU ARE</span></div>
@@ -12,26 +12,96 @@
           <button id="listen" class="primary wide">Start listening <span aria-hidden="true">↗</span></button>
           <p class="shortcut-hint">or press <kbd id="shortcut">⌘ ⇧ Space</kbd></p>
         </div>
-        <div id="review" class="review" hidden><div class="eyebrow">REVIEW COMMAND</div><h3>Here’s what will happen</h3><ol id="plan-list"></ol><div class="button-row"><button id="approve" class="primary">Run command</button><button id="dismiss" class="secondary">Dismiss</button></div></div>
+        <div id="review" class="review" hidden><div class="eyebrow">REVIEW COMMAND</div><h3>Here’s what will happen</h3><ol id="plan-list"></ol><p id="voice-review-hint" class="fine-print" hidden>While listening, say “confirm command” or “cancel command”. Include your trigger phrase if you set one.</p><div class="button-row"><button id="approve" class="primary">Run command</button><button id="dismiss" class="secondary">Dismiss</button></div></div>
+        <div id="clarification" class="review" hidden><div class="eyebrow">ONE DETAIL TO FINISH</div><h3 id="question-prompt"></h3><div id="question-choices" class="choice-list"></div><p class="fine-print">Choose an option, say its number, or type an answer below.</p></div>
+        <section id="execution-progress" class="review" hidden aria-label="Command progress"><div class="section-heading"><h3 id="progress-heading">Command progress</h3><span id="progress-state"></span></div><ol id="progress-steps" class="progress-steps"></ol><p class="fine-print">Completed steps show confirmed results. A stopped or failed step may have made some changes. Pending steps are not retried automatically.</p></section>
+        <div id="recovery-card" class="review" hidden><strong id="recovery-title"></strong><p id="recovery-detail"></p><button id="recovery-action" class="secondary">Open setup guide</button></div>
+        <p id="dictation-state" class="dictation-notice" hidden>Dictation is on. Speak text literally; say “stop dictation” to return to commands.</p>
         <form id="command-form" class="command-form"><label for="command">Prefer to type?</label><div class="input-row"><input id="command" name="command" maxlength="500" placeholder="Try “open a new tab”" autocomplete="off" required><button id="run-text" class="send-button" aria-label="Run typed command" title="Run typed command">↵</button></div></form>
         <div class="section-heading"><h3>Recent activity</h3><button id="clear-log" class="text-button">Clear</button></div>
         <ol id="activity" class="activity"></ol><p id="empty-log" class="empty-state">A quieter way to get things done.<br>Your completed commands will appear here.</p>
       </section>
-      <section id="commands" class="pane" hidden><div class="pane-heading"><span class="eyebrow">A FEW WORDS GO A LONG WAY</span><h2>Just say the word.</h2><p>Choose an example to try it. Edit the words to make it yours.</p></div><label class="sr-only" for="filter">Filter commands</label><input id="filter" class="filter" placeholder="Find a command…"><div id="examples"></div><p class="fine-print">Join simple commands with “then”. AI interpretations and closing several tabs ask you to review first.</p></section>
+      <section id="commands" class="pane" hidden><div class="pane-heading"><span class="eyebrow">A FEW WORDS GO A LONG WAY</span><h2>Just say the word.</h2><p>Use your own wording, site names, spoken numbers, or sets of tabs. Examples include other ways to say the same thing.</p></div><label class="sr-only" for="filter">Filter commands</label><input id="filter" class="filter" placeholder="Find a command…"><div id="examples"></div><p class="fine-print">Named commands work without AI. If several tabs match, answer with an option number or a specific title. Say “stop” or “never mind” to cancel; “actually, pin it instead” corrects a recent reversible change. Join commands with “then”. AI commands run after validation. AI tab closures and closing several tabs ask you to review first.</p></section>
+      <section id="library" class="pane" hidden>
+        <div class="pane-heading"><span class="eyebrow">MAKE CHROME YOUR OWN</span><h2>Your browser library.</h2><p>Give sites a nickname, keep routines together, and pick up where you left off.</p></div>
+        <nav class="library-nav" aria-label="Library collections"><button class="secondary" data-library="sites" aria-current="page">Sites</button><button class="secondary" data-library="macros">Macros</button><button class="secondary" data-library="routines">Routines</button><button class="secondary" data-library="workspaces">Workspaces</button><button class="secondary" data-library="reading">Read later</button></nav>
+        <div id="library-sites" class="library-section">
+          <div class="section-heading"><h3>My site nicknames</h3><button id="new-alias" class="secondary">+ Add site</button></div>
+          <div id="alias-list" class="macro-list"></div>
+          <form id="alias-form" class="macro-editor" hidden><div class="section-heading"><h3 id="alias-heading">New site nickname</h3><button type="button" id="cancel-alias" class="text-button">Cancel</button></div><div class="setting"><label for="alias-name">Name to say</label><input id="alias-name" maxlength="60" placeholder="Work dashboard" required></div><div class="setting"><label for="alias-url">Website address</label><input id="alias-url" type="url" maxlength="4000" placeholder="https://example.com/dashboard" required></div><div class="setting"><label for="alias-search">Search URL · optional</label><input id="alias-search" maxlength="4000" placeholder="https://example.com/search?q={query}"><p>Use {query} once, where the search words should go.</p></div><button class="primary wide" type="submit">Save nickname</button></form>
+          <div id="suggestions-wrap" hidden><div class="section-heading"><h3>Suggested sites</h3><button id="refresh-sites" class="text-button">Refresh</button></div><p class="fine-print">Review and name a suggestion before adding it. Only site origins are kept.</p><div id="site-suggestions" class="macro-list"></div></div>
+          <details class="builtin-sites"><summary>Built-in sites <span id="site-count"></span></summary><p class="fine-print">These names work right away. “Open Gmail” reuses an existing tab; “open another Gmail” creates one.</p><div id="builtin-sites"></div></details>
+        </div>
+      <div id="library-macros" class="library-section" hidden>
+        <div class="pane-heading"><span class="eyebrow">YOUR ROUTINE, IN A FEW WORDS</span><h2>One phrase. Your sites.</h2><p>Save the sites you open together, then give them a command of your own.</p></div>
+        <div class="section-heading"><h3>Saved macros <span id="macro-count"></span></h3><button id="new-macro" class="secondary">+ New macro</button></div>
+        <p id="macro-empty" class="macro-empty">Make mornings a little easier.<br>Try a macro called “Daily morning” with the command “open up my daily morning sites”.</p>
+        <div id="macro-list" class="macro-list"></div>
+        <form id="macro-form" class="macro-editor" hidden>
+          <div class="section-heading"><h3 id="macro-editor-title">New macro</h3><button id="cancel-macro" class="text-button" type="button">Cancel</button></div>
+          <div class="setting"><label for="macro-name">Macro name</label><input id="macro-name" placeholder="Daily morning" maxlength="60" required></div>
+          <div class="setting"><label for="macro-phrase">Command to say</label><input id="macro-phrase" placeholder="Open up my daily morning sites" maxlength="120" required aria-describedby="macro-phrase-hint"><p id="macro-phrase-hint">This phrase works by voice or in the typed command box. Saved phrases take priority over built-in commands.</p></div>
+          <div class="setting"><label for="macro-sites">Websites</label><textarea id="macro-sites" rows="5" maxlength="41000" required spellcheck="false" placeholder="mail.google.com&#10;calendar.google.com&#10;news.ycombinator.com" aria-describedby="macro-sites-hint"></textarea><p id="macro-sites-hint">One address per line, up to 20 sites. They open in this order, with the first tab selected.</p></div>
+          <button id="save-macro" class="primary wide" type="submit">Save macro</button>
+        </form>
+        <p id="macro-status" class="saved" role="status"></p>
+        <p class="fine-print">Your macros are stored on this device. Press your listening shortcut, then say the saved command. Local AI can stay off.</p>
+      </div>
+        <div id="library-routines" class="library-section" hidden>
+          <div class="section-heading"><h3>Saved routines <span id="routine-count"></span></h3><button id="new-routine" class="secondary">+ New routine</button></div>
+          <p class="fine-print">Give several commands one phrase. Every run starts with a preview and pauses for missing details. Say “stop” to cancel the remaining steps.</p>
+          <p id="routine-empty" class="empty-state">Make a repeated task your own.<br>Start with an example or write your own steps.</p>
+          <div class="button-row"><button id="export-routines" class="secondary" type="button">Export routines</button><label class="import-label">Import routines<input id="import-routines" type="file" accept="application/json,.json" aria-label="Import routines from JSON"></label></div>
+          <div id="routine-import-review" class="review" hidden><h3>Review imported routines</h3><ol id="routine-import-list"></ol><p class="fine-print">Adds new routines without overwriting saved ones. Conflicting names or phrases must be renamed first. Nothing runs during import.</p><div class="button-row"><button id="confirm-routine-import" class="primary" type="button">Add these routines</button><button id="cancel-routine-import" class="secondary" type="button">Cancel import</button></div></div>
+          <div id="routine-list" class="macro-list"></div>
+          <details class="builtin-sites"><summary>Start from an example</summary><div id="routine-presets" class="button-row"></div></details>
+          <form id="routine-form" class="macro-editor" hidden>
+            <div class="section-heading"><h3 id="routine-heading">New routine</h3><button id="cancel-routine" class="text-button" type="button">Cancel</button></div>
+            <div class="setting"><label for="routine-name">Routine name</label><input id="routine-name" maxlength="60" placeholder="Focused reading" required></div>
+            <div class="setting"><label for="routine-phrase">Command to say</label><input id="routine-phrase" maxlength="120" placeholder="Set up focused reading" required></div>
+            <div class="setting"><label for="routine-steps">Steps · one command per line</label><textarea id="routine-steps" rows="6" maxlength="4007" placeholder="Mute other tabs&#10;Zoom to 125 percent&#10;Scroll to the top" required></textarea><p>Up to 8 actions. Use commands from the Commands tab. Add “wait for the page to load” before working on a newly opened page. Page controls need site access. Saved macros and other routines cannot be used as steps.</p></div>
+            <p class="fine-print">Use {topic} or another input name in search words or field text. Up to three inputs are asked before the run preview. A phrase such as “research {topic}” accepts one input at its end. Inputs never become extra commands.</p>
+            <details class="routine-reorder"><summary>Reorder steps · drag or use arrows</summary><ol id="routine-order"></ol></details>
+            <div class="eyebrow">ACTION PREVIEW</div><ol id="routine-preview" class="routine-preview"></ol><p id="routine-validation" class="fine-print" role="status"></p>
+            <button class="primary wide" type="submit">Save routine</button>
+          </form>
+          <p id="routine-status" class="saved" role="status"></p>
+          <p class="fine-print">Stored on this device. Routines use supported commands locally. Completed steps stay completed when you cancel; a routine does not roll them back. Keep secrets out of saved steps.</p>
+        </div>
+        <div id="library-workspaces" class="library-section" hidden><div class="section-heading"><h3>Saved workspaces</h3></div><p class="fine-print">Say “save this workspace as Research” to save web tabs, pin states, and named groups. Restoring opens a new window.</p><div id="workspace-list" class="macro-list"></div></div>
+        <div id="library-reading" class="library-section" hidden><div class="section-heading"><h3>Chrome reading list</h3><button id="refresh-reading" class="text-button">Refresh</button></div><p class="fine-print">Say “save this for later” on any article, or “open my unread articles” to review a batch.</p><div id="reading-list" class="macro-list"></div></div>
+        <p id="library-status" class="saved" role="status"></p>
+      </section>
       <section id="settings" class="pane" hidden><div class="pane-heading"><span class="eyebrow">MAKE YOURSELF COMFORTABLE</span><h2>Your kind of hands-free.</h2></div>
         <form id="settings-form">
-          <div class="setting"><label for="mode">Memory &amp; power</label><select id="mode"><option value="power-saver">Power Saver · sleep after 3 minutes</option><option value="standby">Standby · keep the engine ready</option></select><p>Power Saver releases audio and model memory. Your next command wakes the engine.</p></div>
-          <div class="setting"><label for="trigger">Optional trigger phrase</label><input id="trigger" maxlength="40" placeholder="e.g. Hey HandsFree"><p>Say this before your command after pressing the shortcut. The microphone stays off between commands.</p></div>
+          <div class="setting"><label for="mode">Memory &amp; power</label><select id="mode"><option value="power-saver">Power Saver · sleep after 3 minutes</option><option value="standby">Standby · keep the engine ready</option></select><p>Power Saver releases model memory after 3 idle minutes when the microphone is off.</p></div>
+          <div class="setting"><label for="listening-mode">Microphone behavior</label><select id="listening-mode"><option value="continuous">Keep listening until I press the shortcut again</option><option value="single">Listen for one command</option></select><p>Continuous mode handles each phrase in order. The shortcut or Stop listening turns the microphone off.</p></div>
+          <div class="setting"><label for="trigger">Optional trigger phrase</label><input id="trigger" maxlength="40" placeholder="e.g. Hey HandsFree"><p>While listening, only phrases starting with this trigger become commands. Leave blank to act on every recognized phrase.</p></div>
           <div class="setting"><label for="language">Speech language</label><select id="language"><option value="en-US">English · United States</option><option value="en-GB">English · United Kingdom</option><option value="en-AU">English · Australia</option><option value="en-CA">English · Canada</option></select></div>
-          <label class="toggle-row"><span><strong>Local AI · experimental</strong><small>Try flexible phrasing with SmolLM2. It can misinterpret requests; every AI plan needs your review.</small></span><input id="ai" type="checkbox" role="switch"></label>
+          <div class="setting"><label for="feedback">Command feedback</label><select id="feedback"><option value="none">Visual feedback only</option><option value="sound">Short sound</option><option value="speech">Short spoken response · local voice</option></select><p>Spoken feedback uses an installed local voice, with a sound as fallback. Recognition pauses briefly during feedback.</p></div>
+          <label class="toggle-row"><span><strong>Reuse open sites</strong><small>“Open Gmail” switches to an existing Gmail tab. Say “open another Gmail” for a new one.</small></span><input id="reuse-tabs" type="checkbox" role="switch"></label>
+          <div class="setting"><label>Preferred apps</label><p>Choose what “my email”, “my calendar”, or “my music” should open.</p><div id="site-defaults" class="defaults-grid"></div></div>
+          <label class="toggle-row"><span><strong>Learn my sites</strong><small>Ask Chrome for its top-site suggestions. Review and edit them in Library; no full history is read.</small></span><input id="learn-sites" type="checkbox" role="switch"></label>
+          <label class="toggle-row"><span><strong>AI for flexible commands</strong><small>Built-in commands and macros run first. Other phrases go to your selected model.</small></span><input id="ai" type="checkbox" role="switch"></label>
+          <div class="setting"><label for="ai-provider">AI provider</label><select id="ai-provider"><option value="local">On-device SmolLM2 · experimental</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic Claude</option><option value="gemini">Google Gemini</option><option value="compatible">OpenAI-compatible API</option></select><p id="local-ai-note">The small bundled model can misinterpret requests. Use command examples for predictable results.</p></div>
+          <div id="cloud-settings" hidden>
+            <div id="base-url-setting" class="setting" hidden><label for="ai-base-url">HTTPS API base URL</label><input id="ai-base-url" type="url" placeholder="https://your-provider.example/v1" maxlength="1000" autocomplete="off"><p>Use an API you trust. HandsFree appends /chat/completions.</p></div>
+            <div class="setting"><label for="ai-model">Model ID</label><input id="ai-model" placeholder="Enter a model ID from your provider" maxlength="150" autocomplete="off"><p>Choose a text model that supports structured JSON or tool responses.</p></div>
+            <div class="setting"><label for="api-key">API key</label><input id="api-key" type="password" placeholder="Paste your API key" maxlength="4096" autocomplete="off" spellcheck="false"><p id="key-status">Saved only on this device. Leave blank to keep the saved key for this provider.</p></div>
+            <div class="button-row"><button id="test-ai" class="secondary" type="button">Test saved connection</button><button id="remove-key" class="text-button" type="button">Remove saved key</button></div><p id="connection-status" class="saved" role="status"></p>
+            <p class="fine-print">Save preferences first. Chrome will ask for access to this API address. AI requests and connection tests use your provider’s billing. Only the command text is sent; no tab list or browsing history.</p>
+          </div>
+          <label class="toggle-row"><span><strong>Review every AI command</strong><small>When off, validated AI commands run automatically. AI tab closures and bulk closing always need confirmation.</small></span><input id="review-ai" type="checkbox" role="switch"></label>
           <label class="toggle-row"><span><strong>Save command transcripts</strong><small>Off by default. Keep up to 30 locally; turning off removes saved transcripts.</small></span><input id="save-transcripts" type="checkbox" role="switch"></label>
           <button class="primary wide" type="submit">Save preferences</button><p id="saved" class="saved" role="status"></p>
         </form>
+        <div class="setting page-access"><h3>Page controls</h3><p>Allow website access for scrolling, link labels, text fields, dictation, and media controls. Chrome internal pages are unavailable.</p><div class="button-row"><button id="allow-site" type="button" class="secondary">Allow this site</button><button id="allow-all-sites" type="button" class="text-button">Allow all websites</button></div><p id="site-access-status" class="saved" role="status"></p></div>
+        <div class="setting"><div class="section-heading"><h3>Readiness &amp; troubleshooting</h3><button id="diagnostics-check" type="button" class="secondary">Check readiness</button></div><p>Check setup and permissions locally. This does not start the microphone or call your AI provider.</p><ul id="diagnostics-results" class="diagnostics-list" aria-live="polite"></ul></div>
         <div class="utility-actions"><button id="microphone-setup" class="secondary">Microphone setup</button><button id="change-shortcut" class="secondary">Change shortcut ↗</button><button id="sleep" class="text-button">Release engine memory now</button></div>
-        <div class="privacy-note"><strong>A note on privacy</strong><p>Command interpretation runs on your device. Chrome’s speech service may send audio to Google for transcription and require internet. No analytics, accounts, or API keys.</p></div>
+        <div class="privacy-note"><strong>A note on privacy</strong><p>Built-in commands and the on-device model run locally. If you enable a cloud provider, command text is sent to that provider. API keys are stored locally, not synced or encrypted by HandsFree. Chrome’s speech service may send audio to Google while listening. No analytics.</p></div>
       </section>
       <p id="error" class="error-message" role="alert" hidden></p>
     </main>
-    <footer><span class="footer-dot"></span> Local command processing <span class="footer-right" id="engine-state">Engine asleep</span></footer>
+    <footer><span class="footer-dot"></span> <span id="processing-provider">Local commands</span> <span class="footer-right" id="engine-state">Engine asleep</span></footer>
   </div><script type="module" src="./popup.ts"></script>
 </body></html>

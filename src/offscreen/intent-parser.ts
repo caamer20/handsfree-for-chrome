@@ -16,9 +16,17 @@ if (wasm) {
 }
 
 const SYSTEM_PROMPT = `Translate a browser command to a JSON array. Output JSON only. No prose. No code. Use only the following actions and parameters:
+browser_page: {"page":"downloads|history|bookmarks|settings|extensions"}
+organize_tabs: {"operation":"ungroup|sort_title|sort_site"}
+wait_for_page: {}
+wait_for_field: {"query":"exact field label"}
 create_tab: {"url":"https://...","active":true}
-close_tab: {"target":"current|all_others|left|right"}
+close_tab: {"target":"current|all_others|left|right|all|matching","query":"name only for matching"}
 find_tab: {"query":"words","auto_switch":true}
+select_tab: {"position":"next|previous|first|last|index","index":3,"activate":true}. Optional offset counts next/previous tabs; optional from_end:true counts an index from the right.
+move_tab: {"position":"left|right|first|last|index","index":3}. Optional steps counts places when moving left/right.
+reopen_tab: {}
+create_window: {"with_current_tab":false}
 duplicate_tab: {}
 reload_tab: {"bypass_cache":false}
 mute_tab: {"mute":true} or {"toggle":true}
@@ -28,7 +36,23 @@ zoom: {"mode":"in|out|reset|set","factor":1.25}
 bookmark_page: {"title":"optional title","folder":"optional folder"}
 open_bookmark: {"query":"words"} or {"index":1}
 navigate_history: {"direction":"back|forward"}
-Every array item has exactly {"action":"name","params":{...}}. Choose one enum value, never a list with pipes. Omit optional fields if unnecessary. Never invent URLs. Use Google https://www.google.com/search?q=QUERY, YouTube https://www.youtube.com/results?search_query=QUERY, GitHub https://github.com/search?q=QUERY with percent-encoded QUERY. A compound search is one create_tab. Unsupported commands return [].`;
+open_site: {"site":"spoken site or nickname","new_tab":false}
+search_site: {"site":"Wikipedia","query":"spoken search terms"}
+reference_tabs: {"reference":"it|them|these|other|previous","activate":false}. Use activate:true only to switch to a referenced tab.
+select_tabs: {"queries":["Gmail","YouTube"],"all_matches":false}
+move_beside: {"query":"Gmail","side":"before|after"}
+undo_action: {"kind":"move|pin|mute|zoom"}
+site_alias: {"name":"nickname"}
+macro_add_site: {"name":"routine name"}
+page_action: {"operation":"scroll|find|find_next|find_previous|show_links|activate|hide_links|focus|type|fill|clear|select_all|delete_selection|next_field|previous_field|show_fields|select_option|check|uncheck|dictate_start|dictate_stop|media_play|media_pause|media_seek|media_volume|help","query":"optional exact label or search","text":"optional literal text","index":5,"direction":"up|down|left|right|top|bottom","amount":"little|half|page|repeat","value":10,"relative":true}
+group_action: {"operation":"create|add|collapse|expand|rename|move_window|color|ungroup","name":"group name","new_name":"optional new name","color":"optional grey|blue|red|yellow|green|pink|purple|cyan|orange"}
+workspace_action: {"operation":"save|restore|list","name":"optional workspace name"}
+reading_action: {"operation":"save|list|open_unread|mark_read|mark_unread"}
+audio_action: {"operation":"list|focus|mute_others","query":"optional tab name"}
+duplicates_action: {"operation":"show|close"}
+tab_set: {"operation":"target|list","filter":"all|pinned|unpinned|muted|unmuted|audible","scope":"window|all","exclude_query":"optional spoken tab name","indices":[2,3,4]}
+help: {}
+fill replaces entire field text; type inserts text. select_option uses text for the full option label and query for the dropdown label. check/uncheck set checkbox states. Omit search_site.query when the user has not given search words; the extension asks locally. Use wait_for_page only for a requested page-load wait. Every array item has exactly {"action":"name","params":{...}}. Choose one enum value, never a list with pipes. Omit optional fields if unnecessary. Never invent URLs. Use Google https://www.google.com/search?q=QUERY, YouTube https://www.youtube.com/results?search_query=QUERY, GitHub https://github.com/search?q=QUERY with percent-encoded QUERY. A compound search is one create_tab. Named tab actions require find_tab with auto_switch:false BEFORE the requested mutation. Never close the current tab if the user named a different tab. Tab indexes start at 1. Unsupported commands return [].`;
 
 export class IntentParser {
   private generator: TextGenerationPipeline | null = null;
@@ -67,7 +91,7 @@ export class IntentParser {
   async parse(transcript: string, aiEnabled: boolean, status: (message: string) => void): Promise<{ actions: ChromeAction[]; source: 'grammar' | 'model' }> {
     const known = parseCommand(transcript);
     if (known) return { actions: known, source: 'grammar' };
-    if (!aiEnabled) throw new Error('Try a phrase from Commands, or enable local AI in Settings.');
+    if (!aiEnabled) throw new Error('Try a phrase from Commands, or enable AI in Settings.');
     if (this.disposed) throw new Error('Command cancelled.');
     const generator = await this.initialize(status);
     this.stop.reset();

@@ -50,3 +50,42 @@ it('creates one offscreen document for concurrent requests and serializes teardo
   expect(open).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
 });
+it('continuous speech emits each final once, survives quiet periods and restarts, then stops cleanly', async () => {
+  const speech = new SpeechSession(); const final = vi.fn(); const error = vi.fn();
+  speech.startContinuous('en-GB', final, vi.fn(), error);
+  const first = FakeRecognition.latest;
+  expect(first.continuous).toBe(true); expect(first.lang).toBe('en-GB');
+  const event = { resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'open a new tab' } }] };
+  first.onresult?.(event); first.onresult?.(event);
+  await vi.advanceTimersByTimeAsync(650);
+  expect(final).toHaveBeenCalledExactlyOnceWith('open a new tab');
+  await vi.advanceTimersByTimeAsync(180_000);
+  expect(first.abort).not.toHaveBeenCalled();
+  first.onend?.(); await vi.advanceTimersByTimeAsync(300);
+  const second = FakeRecognition.latest; expect(second).not.toBe(first);
+  second.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'zoom in' } }] });
+  await vi.advanceTimersByTimeAsync(650); expect(final).toHaveBeenLastCalledWith('zoom in');
+  second.onend?.(); speech.cancel();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(FakeRecognition.latest).toBe(second); expect(error).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+});
+it('drops buffered speech on stop and does not restart after microphone denial', async () => {
+  const speech = new SpeechSession(); const final = vi.fn(); const error = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), error);
+  FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'close all tabs' } }] });
+  speech.cancel(); await vi.advanceTimersByTimeAsync(1000); expect(final).not.toHaveBeenCalled();
+  speech.startContinuous('en-US', final, vi.fn(), error);
+  const last = FakeRecognition.latest; last.onerror?.({ error: 'not-allowed' });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(error).toHaveBeenCalledWith(expect.stringContaining('Microphone access is blocked'));
+  expect(last.onend).toBeNull(); expect(vi.getTimerCount()).toBe(0);
+});
+it('retries temporary speech network failures a bounded number of times', async () => {
+  const speech = new SpeechSession(); const error = vi.fn();
+  speech.startContinuous('en-US', vi.fn(), vi.fn(), error);
+  for (let i = 0; i < 4; i++) {
+    FakeRecognition.latest.onerror?.({ error: 'network' }); FakeRecognition.latest.onend?.();
+    await vi.advanceTimersByTimeAsync(8000);
+  }
+  expect(error).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+});

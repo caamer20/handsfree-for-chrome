@@ -13,7 +13,7 @@ export async function hasOffscreen(): Promise<boolean> {
 export function ensureOffscreen(): Promise<void> {
   return serial(async () => {
     if (await hasOffscreen()) return;
-    await chrome.offscreen.createDocument({ url: OFFSCREEN_PATH, reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS], justification: 'Recognize a requested voice command and interpret it with a bundled local language model.' });
+    await chrome.offscreen.createDocument({ url: OFFSCREEN_PATH, reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WORKERS], justification: 'Listen during a user-toggled voice session and interpret browser commands with optional bundled local AI.' });
   });
 }
 export function closeOffscreen(): Promise<void> {

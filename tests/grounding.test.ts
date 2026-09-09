@@ -15,3 +15,10 @@ it('handles polite everyday audio phrasing without model inference', () => {
   expect(parseCommand('Turn the sound back on')).toEqual([{ action: 'mute_tab', params: { mute: false } }]);
   expect(parseCommand('bookmark this page as Recipes in Cooking')).toEqual([{ action: 'bookmark_page', params: { title: 'Recipes', folder: 'Cooking' } }]);
 });
+
+it('accepts a named familiar homepage while rejecting invented hosts and paths', () => {
+  expect(validateGrounding([{ action: 'create_tab', params: { url: 'https://www.youtube.com/' } }], 'Pull up YouTube for me')).toHaveLength(1);
+  expect(validateGrounding([{ action: 'create_tab', params: { url: 'https://mail.google.com/' } }], 'Take me to Gmail')).toHaveLength(1);
+  expect(() => validateGrounding([{ action: 'create_tab', params: { url: 'https://youtube.example/' } }], 'Pull up YouTube')).toThrow('invented a destination');
+  expect(() => validateGrounding([{ action: 'create_tab', params: { url: 'https://www.youtube.com/arbitrary-path' } }], 'Pull up YouTube')).toThrow('invented a destination');
+});

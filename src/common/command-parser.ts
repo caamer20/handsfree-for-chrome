@@ -1,4 +1,9 @@
+import { formLiteral, incompleteSearch, productivityCommand } from './productivity-parser';
 import { actionsSchema, type ChromeAction } from './schema';
+import { expandedCommand, expandedSearch } from './expanded-parser';
+import { canonicalCommand, isNegatedCommand } from './language';
+import { literalCommand, naturalCommand, naturalSearch } from './natural-commands';
+import { parseTabCommand } from './tab-commands';
 
 export const searchUrl = (engine: string, query: string): string => {
   const q = encodeURIComponent(query.trim());
@@ -19,10 +24,18 @@ function single(action: ChromeAction): ChromeAction[] { return actionsSchema.par
 
 /** Conservative exact grammar. Unrecognized language is never guessed into an action. */
 export function parseCommand(input: string): ChromeAction[] | null {
-  const raw = input.trim().replace(/[.!?]+$/, '').replace(/^(?:(?:please|can you|could you|would you)\s+)+/i, '').replace(/\s+please$/i, '');
+  if (isNegatedCommand(input)) return null;
+  const raw = canonicalCommand(input);
   const c = raw.toLowerCase().replace(/\s+/g, ' ');
   if (!c || c.length > 500) return null;
   let m: RegExpMatchArray | null;
+
+  const form = formLiteral(raw); if (form) return actionsSchema.parse(form);
+  const incomplete = incompleteSearch(raw); if (incomplete) return actionsSchema.parse(incomplete);
+  const literal = literalCommand(raw); if (literal) return actionsSchema.parse(literal);
+  const naturalQuery = naturalSearch(raw); if (naturalQuery) return actionsSchema.parse(naturalQuery);
+  const siteSearch = expandedSearch(raw);
+  if (siteSearch) return actionsSchema.parse(siteSearch);
 
   // Resolve compound search BEFORE splitting commands; queries may contain “and”.
   m = raw.match(/^(?:open (?:a )?new tab[,\s]*(?:and\s+)?)?(?:open\s+)?(google|youtube|github)(?:\s+search)?\s+(?:and\s+)?(?:search\s+)?for\s+(.+)$/i)
@@ -32,6 +45,20 @@ export function parseCommand(input: string): ChromeAction[] | null {
   if (m?.[1] && m[2]) return single({ action: 'create_tab', params: { url: searchUrl(m[2], m[1]) } });
   m = raw.match(/^(?:search(?:\s+for)?|google)\s+(.+)$/i);
   if (m?.[1]) return single({ action: 'create_tab', params: { url: searchUrl('google', m[1]) } });
+
+  // Split sequences before greedy tab-title matching. Search queries above remain intact.
+  const parts = splitSequence(raw);
+  if (parts.length > 1) {
+    if (parts.length > 8) return null;
+    const parsed = parts.map(parseCommand);
+    return parsed.every(part => part !== null) ? actionsSchema.parse(parsed.flat()) : null;
+  }
+  const productivity = productivityCommand(raw); if (productivity) return actionsSchema.parse(productivity);
+  const natural = naturalCommand(raw, parseCommand); if (natural) return actionsSchema.parse(natural);
+  const expanded = expandedCommand(raw);
+  if (expanded) return actionsSchema.parse(expanded);
+  const tabCommand = parseTabCommand(raw.replace(/\s+/g, ' '));
+  if (tabCommand) return actionsSchema.parse(tabCommand);
 
   if (/^(?:open|create)(?: a)? new tab$/.test(c) || c === 'new tab') return single({ action: 'create_tab', params: { url: 'chrome://newtab/' } });
   m = raw.match(/^(?:open|go to|navigate to)\s+(https?:\/\/\S+|(?:[\w-]+\.)+[a-z]{2,}(?:\/\S*)?)$/i);
@@ -68,10 +95,16 @@ export function parseCommand(input: string): ChromeAction[] | null {
   if (m?.[1]) return single({ action: 'open_bookmark', params: { query: m[1] } });
   if (/^(?:go |navigate )?(back|forward)$/.test(c)) return single({ action: 'navigate_history', params: { direction: c.endsWith('back') ? 'back' : 'forward' } });
 
-  const parts = raw.split(/\s+(?:and then|then)\s+|\s*;\s*/i);
-  if (parts.length > 1 && parts.length <= 8) {
-    const parsed = parts.map(parseCommand);
-    if (parsed.every((part) => part !== null)) return actionsSchema.parse(parsed.flat());
-  }
   return null;
+}
+
+function splitSequence(raw: string): string[] {
+  const parts: string[] = []; let start = 0; let quoted = false;
+  const separators = /["“”]|\s*,?\s+(?:and then|then|after that|afterwards)\s+|\s+and(?:\s+also)?\s+(?=(?:open|close|mute|unmute|pin|unpin|move|put|scroll|group|save|find|reload|zoom|pause|play|pull up|visit|switch|show|refresh|unpin|duplicate|bookmark|search|rewind|resume|collapse|expand|type|write|please|could you|can you|get rid of|stop|start|begin|turn|make|hit|tap)\b)|\s*;\s*/gi;
+  for (const match of raw.matchAll(separators)) {
+    if (/^["“”]$/.test(match[0])) { quoted = !quoted; continue; }
+    if (quoted) continue;
+    parts.push(raw.slice(start, match.index).trim()); start = (match.index ?? 0) + match[0].length;
+  }
+  parts.push(raw.slice(start).trim()); return parts;
 }

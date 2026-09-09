@@ -5,3 +5,9 @@ release/
 coverage/
 models/smollm2-135m-quant/*
 !models/smollm2-135m-quant/.gitkeep
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
