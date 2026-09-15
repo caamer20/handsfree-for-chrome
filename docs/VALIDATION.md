@@ -16,6 +16,8 @@ Executed September 15, 2026 UTC, on macOS x64 with Node 24.2.0 and Chrome for Te
 
 The [browser summary](validation/v1.8/browser-summary.json) contains case names and pass results. A 30/30 automated typed-command result is not a measured first-attempt voice success rate.
 
+The optional local-AI package also passed the two installed-browser smoke tests for a real typed command and preference persistence. Native surface tests wait for the popup module, stylesheet, and initial state before measuring its final dimensions; measuring the initial unstyled document produced a false failure in the first Linux/macOS CI run.
+
 ## Installed-browser coverage
 
 Tests load the production MV3 extension with its real service worker, offscreen engine, storage, and Chrome APIs. Thirty commands verify native tab properties, selection, movement, closing/reopening, bookmarks, groups, workspaces, reading list, and actual form/scroll outcomes. Separate journeys cover installation, saved settings, temporary activeTab access from the native toolbar action, blocked-site recovery, explicit remaining-step resumption, engine sleep/recreation, service-worker termination/wake, native popup dimensions, and the persistent side panel. The panel test keeps a draft across tab changes, runs a command, and stops recognition through its actual button.

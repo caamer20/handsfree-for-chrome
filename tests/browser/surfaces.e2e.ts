@@ -27,7 +27,12 @@ test('opens the actual persistent side panel and keeps it available across tab c
 test('opens the native extension popup at Chrome’s actual popup dimensions', async ({ control, worker }) => {
   await worker.evaluate(() => chrome.action.openPopup());
   const popup = await ExtensionTarget.attach(control, '/popup.html');
-  await expect.poll(() => popup.evaluate('document.querySelector("#listen")?.getBoundingClientRect().width ?? 0')).toBeGreaterThan(0);
+  // A button exists before the module and stylesheet finish loading. Native Chrome
+  // also resizes the widget after first render; measure the initialized surface.
+  await expect.poll(() => popup.evaluate('document.readyState')).toBe('complete');
+  await expect.poll(() => popup.evaluate('document.body.dataset.surface')).toBe('popup');
+  await expect.poll(() => popup.evaluate('document.querySelector("#listen").textContent')).toContain('Set up microphone');
+  await expect.poll(() => popup.evaluate<boolean>('document.documentElement.scrollWidth <= innerWidth && document.querySelector("#command").getBoundingClientRect().bottom <= innerHeight')).toBe(true);
   const size = await popup.evaluate<{ width: number; height: number; scrollWidth: number }>('({ width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth })');
   expect(size.width).toBeLessThanOrEqual(800); expect(size.height).toBeLessThanOrEqual(600); expect(size.scrollWidth).toBeLessThanOrEqual(size.width);
   expect(await popup.evaluate<boolean>('document.querySelector("#command").getBoundingClientRect().bottom <= innerHeight')).toBe(true);
