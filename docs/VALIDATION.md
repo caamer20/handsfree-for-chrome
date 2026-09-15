@@ -16,7 +16,7 @@ Executed September 15, 2026 UTC, on macOS x64 with Node 24.2.0 and Chrome for Te
 
 The [browser summary](validation/v1.8/browser-summary.json) contains case names and pass results. A 30/30 automated typed-command result is not a measured first-attempt voice success rate.
 
-The optional local-AI package also passed the two installed-browser smoke tests for a real typed command and preference persistence. Native surface tests wait for the popup module, stylesheet, and initial state before measuring its final dimensions; measuring the initial unstyled document produced a false failure in the first Linux/macOS CI run.
+The optional local-AI package also passed the two installed-browser smoke tests for a real typed command and preference persistence. CI exposed popup autosizing changes and races in fixture setup. The popup body now has an explicit width; native tests wait for initialization and verify dimensions across multiple frames. Test pages attach before their first navigation, and Windows CI uses native desktop windows for popup and panel APIs.
 
 ## Installed-browser coverage
 
@@ -32,8 +32,8 @@ Inspected screenshots: [native popup](validation/v1.8/native-popup.png), [persis
 
 | Edition | ZIP | Unpacked |
 | --- | --- | --- |
-| Standard | 182,985 bytes (179 KiB) | 524,568 bytes (0.50 MiB) |
-| Optional local AI | 222,243,083 bytes (211.9 MiB) | 377,118,532 bytes (359.65 MiB) |
+| Standard | 182,986 bytes (179 KiB) | 524,605 bytes (0.50 MiB) |
+| Optional local AI | 222,243,084 bytes (211.9 MiB) | 377,118,569 bytes (359.65 MiB) |
 
 The standard ZIP is over 99.9% smaller than the published 1.7 ZIP (222,226,504 bytes). It contains no ONNX weights, WASM runtime, or model directory. Build verification enforces a 5 MiB unpacked budget. Both editions retain optional cloud AI; local AI stays optional and off by default.
 

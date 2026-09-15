@@ -38,12 +38,18 @@ for (const [command, check] of cases) test(`common task: ${command}`, async ({ c
     const title = route.request().url().endsWith('/research') ? 'Research' : route.request().url().endsWith('/notes') ? 'Notes' : 'Start page';
     return route.fulfill({ contentType: 'text/html', body: `<!doctype html><title>${title}</title><h1>${title}</h1><label>Search<input type="search" value="original"></label><label>Remember me<input type="checkbox"></label><label>Country<select><option>United States</option><option>Canada</option></select></label><a href="/notes">Notes link</a><div style="height:3000px">Browser test fixture</div>` });
   });
-  const created = await worker.evaluate(() => chrome.windows.create({ type: 'normal', focused: true, url: ['https://handsfree.test/start', 'https://handsfree.test/research', 'https://handsfree.test/notes'] }));
-  const windowId = created.id!; const ids = created.tabs!.map(tab => tab.id!);
-  await worker.evaluate(async id => { await chrome.tabs.update(id, { active: true }); }, ids[0]!);
-  await expect.poll(() => context.pages().some(page => page.url() === 'https://handsfree.test/start')).toBe(true);
-  const page = context.pages().find(page => page.url() === 'https://handsfree.test/start')!;
-  await page.waitForLoadState(); await page.bringToFront();
+  // Attach to each blank page before navigation. A native new window's first
+  // network request can precede Playwright interception on Windows.
+  const firstPage = context.waitForEvent('page');
+  const created = await worker.evaluate(() => chrome.windows.create({ type: 'normal', focused: true, url: 'about:blank' }));
+  const windowId = created.id!; const ids = [created.tabs![0]!.id!];
+  const page = await firstPage; await page.goto('https://handsfree.test/start');
+  for (const path of ['research', 'notes']) {
+    const nextPage = context.waitForEvent('page');
+    const tab = await worker.evaluate(id => chrome.tabs.create({ windowId: id, url: 'about:blank', active: false }), windowId);
+    ids.push(tab.id!); await (await nextPage).goto(`https://handsfree.test/${path}`);
+  }
+  await page.bringToFront();
   if (check === 'unpin') await worker.evaluate(id => chrome.tabs.update(id, { pinned: true }), ids[0]!);
   if (check === 'unmute') await worker.evaluate(id => chrome.tabs.update(id, { muted: true }), ids[0]!);
   if (check === 'zoom-reset') await worker.evaluate(id => chrome.tabs.setZoom(id, 1.5), ids[0]!);

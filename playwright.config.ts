@@ -14,5 +14,6 @@ export default defineConfig({
   retries: 0,
   maxFailures: process.env.CI ? 3 : 0,
   reporter: [['list'], ['json', { outputFile: 'test-results/browser-results.json' }]],
-  use: { headless: true, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+  // Windows CI has an interactive desktop; use native windows for popup/panel APIs.
+  use: { headless: !(process.env.CI && process.platform === 'win32'), trace: 'retain-on-failure', screenshot: 'only-on-failure' },
 });

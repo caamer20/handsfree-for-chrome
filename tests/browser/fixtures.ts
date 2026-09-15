@@ -20,9 +20,13 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string; 
   },
   extensionId: async ({ worker }, use) => { await use(new URL(worker.url()).host); },
   control: async ({ context, extensionId }, use) => {
+    // onInstalled opens this page only after storage/session initialization.
+    // Wait before creating controls so a late welcome tab cannot steal focus.
+    await expect.poll(() => context.pages().some(page => page.url().endsWith('/onboarding.html'))).toBe(true);
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
-    await expect(page.locator('#status-label')).toHaveText('READY WHEN YOU ARE');
+    await expect(page.locator('#listen')).toContainText('Set up microphone');
+    await page.bringToFront();
     await use(page);
   },
 });

@@ -1,4 +1,6 @@
 @tailwind utilities;
+/* A fixed popup body prevents Chrome's native autosizer from chasing auto margins. */
+body[data-surface="popup"] { width: 390px; }
 body[data-surface="popup"] .voice-card { padding: 16px 18px 12px; }
 body[data-surface="popup"] .voice-card .mic-orbit { display: none; }
 body[data-surface="popup"] .voice-card h2 { font-size: 25px; margin: 12px 0 8px; }
