@@ -16,7 +16,7 @@ Executed September 15, 2026 UTC, on macOS x64 with Node 24.2.0 and Chrome for Te
 
 The [browser summary](validation/v1.8/browser-summary.json) contains case names and pass results. A 30/30 automated typed-command result is not a measured first-attempt voice success rate.
 
-The optional local-AI package also passed the two installed-browser smoke tests for a real typed command and preference persistence. CI exposed popup autosizing changes and races in fixture setup. The popup body now has an explicit width; native tests wait for initialization and verify dimensions across multiple frames. Test pages attach before their first navigation, and Windows CI uses native desktop windows for popup and panel APIs.
+The optional local-AI package also passed the two installed-browser smoke tests for a real typed command and preference persistence. CI exposed popup autosizing changes and races in fixture setup. The popup body now has an explicit width; native tests wait for initialization, settled dimensions, and multiple frames. Test pages attach before their first navigation. Windows CI uses native desktop windows; Linux runs Chrome windows under Xvfb so popup geometry is measured with a display server.
 
 ## Installed-browser coverage
 

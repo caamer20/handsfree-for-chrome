@@ -24,7 +24,7 @@ jobs:
       - run: npm run check:local-ai
       - run: npm run package:local-ai
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
+      - run: xvfb-run --auto-servernum npm run test:browser -- --headed
       - name: Verify upgrade from published preview
         env:
           GH_TOKEN: ${{ github.token }}
