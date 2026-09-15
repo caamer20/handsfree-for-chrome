@@ -37,7 +37,15 @@ test('opens the native extension popup at Chrome’s actual popup dimensions', a
   await expect.poll(() => popup.evaluate('document.readyState')).toBe('complete');
   await expect.poll(() => popup.evaluate('document.body.dataset.surface')).toBe('popup');
   await expect.poll(() => popup.evaluate('document.querySelector("#listen").textContent')).toContain('Set up microphone');
-  await expect.poll(() => popup.evaluate<boolean>('document.documentElement.scrollWidth <= innerWidth && document.querySelector("#command").getBoundingClientRect().bottom <= innerHeight')).toBe(true);
+  // Chrome's native opening animation can report several transient viewport sizes
+  // after document load. Require a stable half-second, then test the settled layout.
+  let previous = ''; let stableSince = 0;
+  await expect.poll(async () => {
+    const current = await popup.evaluate<{ width: number; height: number; scrollWidth: number; inputBottom: number }>('({ width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth, inputBottom: document.querySelector("#command").getBoundingClientRect().bottom })');
+    const key = JSON.stringify(current);
+    if (key !== previous) { previous = key; stableSince = performance.now(); }
+    return performance.now() - stableSince >= 500 && current.scrollWidth <= current.width && current.inputBottom <= current.height;
+  }, { intervals: [50, 100, 100] }).toBe(true);
   const sizes = await popup.evaluate<{ width: number; height: number; scrollWidth: number; inputBottom: number }[]>('(async () => { const sizes = []; for (let frame = 0; frame < 6; frame++) { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); sizes.push({ width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth, inputBottom: document.querySelector("#command").getBoundingClientRect().bottom }); } return sizes; })()');
   await testInfo.attach('native-popup-layout', { body: JSON.stringify(sizes), contentType: 'application/json' });
   await popup.screenshot('test-results/native-popup.png'); await popup.detach();
