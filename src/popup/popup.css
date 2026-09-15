@@ -1,4 +1,33 @@
 @tailwind utilities;
+body[data-surface="popup"] .voice-card { padding: 16px 18px 12px; }
+body[data-surface="popup"] .voice-card .mic-orbit { display: none; }
+body[data-surface="popup"] .voice-card h2 { font-size: 25px; margin: 12px 0 8px; }
+body[data-surface="popup"] .voice-card p { margin: 8px auto 12px; }
+body[data-surface="popup"] .voice-card .shortcut-hint { margin: 10px 0 0; }
+.suggested-commands { margin: 16px 0 22px; }
+.suggested-commands .button-row { flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.suggested-commands button { padding: 8px 10px; font-size: 11px; }
+.advanced-settings { border-top: 1px solid #dce4dd; padding: 16px 0; margin: 14px 0; }
+.advanced-settings>summary { cursor: pointer; font-size: 13px; font-weight: 650; color: #315e4d; }
+.advanced-settings[open]>summary { margin-bottom: 18px; }
+.routine-switcher { margin: 14px 0; }
+.routine-switcher [aria-current="page"] { background: #deeee6; color: #145d4f; border-color: #9fbeaf; }
+.panel-toolbar { display: flex; align-items: center; gap: 8px; margin: 0 24px 16px; }
+.panel-toolbar>span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #567164; font-size: 11px; }
+.panel-toolbar .secondary { padding: 8px 10px; font-size: 10px; }
+.transcript-card { margin-bottom: 14px; padding: 12px; background: white; border: 1px solid #dce4dd; border-radius: 12px; }
+.transcript-card p { margin: 7px 0 0; font-size: 13px; overflow-wrap: anywhere; line-height: 1.5; }
+body[data-surface="panel"] { min-width: 280px; }
+body[data-surface="panel"] .app-shell { width: 100%; max-width: 600px; }
+body[data-surface="panel"] .panel-toolbar { position: sticky; top: 0; z-index: 5; margin: 0; padding: 10px 16px; border-bottom: 1px solid #dce4dd; background: #f8f9f5; }
+body[data-surface="panel"] .brand { padding: 16px; }
+body[data-surface="panel"] .tabs { margin: 0 16px 12px; }
+body[data-surface="panel"] main { padding: 16px; }
+body[data-surface="panel"] .voice-card { padding: 16px; }
+body[data-surface="panel"] .mic-orbit { display: none; }
+body[data-surface="panel"] .voice-card h2 { font-size: 25px; }
+body[data-surface="panel"] .button-row, body[data-surface="panel"] .section-heading { flex-wrap: wrap; gap: 8px; }
+body[data-surface="panel"] .library-nav { flex-wrap: wrap; }
 textarea { width: 100%; box-sizing: border-box; border: 1px solid #dce4dd; border-radius: 10px; background: #fff; padding: 12px; color: #243f38; font: 11px/1.7 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; resize: vertical; min-height: 100px; } textarea:focus-visible { outline: 3px solid #77bba9; outline-offset: 3px; } textarea::placeholder { color: #929e94; }
 .macro-empty { padding: 20px 14px; margin: 14px 0; border: 1px dashed #d2ddcb; border-radius: 12px; background: #f0f4e9; font-size: 11px; line-height: 1.8; color: #6e8062; } .macro-list { margin-top: 14px; } .macro-card { padding: 16px; border: 1px solid #dce6d5; border-radius: 13px; background: #fff; margin-bottom: 10px; } .macro-card h3 { font-size: 13px; overflow-wrap: anywhere; } .macro-phrase { font-size: 11px; line-height: 1.6; color: #56764d; overflow-wrap: anywhere; margin: 8px 0; } .macro-card summary { cursor: pointer; font-size: 10px; color: #7b8b6f; padding: 4px 0; } .macro-sites { padding-left: 18px; color: #7a8b70; font-size: 10px; line-height: 1.8; overflow-wrap: anywhere; } .macro-editor { margin-top: 18px; padding: 17px; border: 1px solid #dce6d5; border-radius: 14px; background: #f0f4e9; } .macro-editor>.section-heading { margin-bottom: 20px; } .macro-editor .setting { margin-bottom: 16px; } .macro-delete { margin-top: 13px; padding-top: 9px; border-top: 1px solid #eadfd2; font-size: 11px; line-height: 1.6; color: #995939; } .macro-delete button { margin-right: 6px; } .danger-button { color: #9e503c !important; border-color: #dfc9bd !important; } #macro-status { text-align: left; line-height: 1.6; overflow-wrap: anywhere; }
 :root { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #243f38; background: #f8f9f5; font-synthesis: none; color-scheme: light; }

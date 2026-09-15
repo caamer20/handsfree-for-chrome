@@ -5,6 +5,7 @@ const windows = { update: vi.fn() };
 beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal('chrome', { tabs, windows }); });
 it('finds tabs across all windows and focuses both window and tab', async () => {
   tabs.query.mockResolvedValue([{ id: 8, windowId: 4, title: 'Design notes', url: 'https://example.com' }]);
+  tabs.get.mockResolvedValue({ id: 8, windowId: 4, active: true, title: 'Design notes' });
   await dispatchActions([{ action: 'find_tab', params: { query: 'design' } }], { tabId: 1, windowId: 2 });
   expect(tabs.query).toHaveBeenCalledWith({});
   expect(windows.update).toHaveBeenCalledWith(4, { focused: true });

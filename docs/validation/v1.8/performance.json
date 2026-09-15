@@ -1,0 +1,21 @@
+{
+  "measuredAt": "2026-09-15T05:06:13.283Z",
+  "platform": "darwin x64",
+  "browser": "153.0.8010.12",
+  "edition": "standard",
+  "input": "typed open a new tab; real Chrome APIs",
+  "coldCommandMs": 620,
+  "warmCommandMs": {
+    "samples": 20,
+    "median": 402,
+    "p95": 830,
+    "max": 847
+  },
+  "engineHeapBytes": {
+    "before": 4380032,
+    "after": 4563216,
+    "retainedGrowth": 183184
+  },
+  "engineTaskDurationSeconds": 1.265542,
+  "limitations": "Synthetic task loop in headless Chrome. Heap is offscreen JavaScript only, not total RSS. Task duration is an engine activity proxy, not battery consumption. No audio/network transcription latency or hardware battery measurement."
+}

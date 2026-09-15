@@ -6,6 +6,7 @@ export async function prepareProgress(id: string, name: string, actions: ChromeA
   if (!progress || progress.id !== id) progress = makeProgress(id, name, actions);
   else progress = structuredClone(progress);
   const offset = Math.max(0, progress.steps.length - actions.length);
+  for (const step of progress.steps.slice(offset)) if (step.status !== 'completed') { step.status = 'pending'; step.result = undefined; }
   progress.status = 'running'; await setSession({ progress });
   return async event => {
     const current = await getSession(); if (current.progress?.id !== id) return;

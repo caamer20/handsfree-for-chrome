@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "HandsFree for Chrome",
   "short_name": "HandsFree",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "minimum_chrome_version": "120",
   "description": "Control Chrome with your voice. Site nicknames, tab groups, workspaces, page controls, dictation, macros, and optional AI.",
   "permissions": [
@@ -15,7 +15,8 @@
     "activeTab",
     "scripting",
     "tabGroups",
-    "readingList"
+    "readingList",
+    "sidePanel"
   ],
   "optional_host_permissions": [
     "https://*/*",
@@ -63,5 +64,8 @@
   },
   "optional_permissions": [
     "topSites"
-  ]
+  ],
+  "side_panel": {
+    "default_path": "src/popup/sidepanel.html"
+  }
 }

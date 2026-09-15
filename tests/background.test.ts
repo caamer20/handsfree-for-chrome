@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { defaultSettings, type Message } from '../src/common/schema';
 import type { Reply } from '../src/common/types';
+import type { SessionState } from '../src/background/store';
 
 type Listener = (raw: unknown, sender: chrome.runtime.MessageSender, respond: (reply: Reply) => void) => boolean;
 let listener: Listener;
@@ -11,6 +12,7 @@ const create = vi.fn(async () => ({ id: 11, windowId: 1 }));
 const close = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('../src/background/offscreen-manager', () => ({ ensureOffscreen: vi.fn(async () => undefined), closeOffscreen: close, hasOffscreen: vi.fn(async () => true) }));
 const url = (path: string): string => `chrome-extension://test/${path}`;
+const savedSession = (): SessionState => session.session as SessionState;
 async function request(message: Message, path = 'src/popup/popup.html'): Promise<Reply> {
   return new Promise(resolve => { listener(message, { id: 'test', url: url(path) }, resolve); });
 }
@@ -402,4 +404,130 @@ it('records successful microphone setup without changing provider settings or te
   local.settings = { ...defaultSettings, aiProvider: 'compatible', aiBaseUrl: 'https://provider.example/v1', aiModel: 'chosen-model' };
   const reply = await request({ target: 'background', type: 'MICROPHONE_READY' }, 'src/popup/onboarding.html');
   expect(reply.ok).toBe(true); expect(local.settings).toMatchObject({ micGranted: true, aiProvider: 'compatible', aiModel: 'chosen-model' }); expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+});
+
+it('verifies a real setup action only after a final spoken setup transcript', async () => {
+  local.settings = { micGranted: true, aiEnabled: true, triggerPhrase: 'hey browser' };
+  vi.mocked(chrome.tabs.get).mockImplementation(async id => ({ id, windowId: 1, index: 0, title: id === 11 ? 'New Tab' : 'Welcome', url: id === 11 ? 'chrome://newtab/' : 'https://example.com/', pinned: false }) as chrome.tabs.Tab);
+  expect((await request({ target: 'background', type: 'START_VOICE_SETUP', pace: 'relaxed' }, 'src/popup/onboarding.html')).ok).toBe(true);
+  const id = savedSession().active!.id;
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'START_LISTENING', settings: expect.objectContaining({ listeningMode: 'single', aiEnabled: false, triggerPhrase: '', voicePace: 'relaxed' }) }));
+  await request({ target: 'background', type: 'ENGINE_LISTENING', requestId: id }, 'src/offscreen/offscreen.html');
+  expect(savedSession().voiceSetup?.stage).toBe('speech');
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: id, text: 'open a new', final: false }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled();
+  const final: Message = { target: 'background', type: 'VOICE_TRANSCRIPT', requestId: id, text: 'open a new tab', final: true, spoken: true };
+  expect(await request(final, 'src/offscreen/offscreen.html')).toMatchObject({ ok: true, handled: true });
+  await request(final, 'src/offscreen/offscreen.html');
+  expect(create).toHaveBeenCalledExactlyOnceWith({ url: 'chrome://newtab/', windowId: 1, active: false });
+  expect(savedSession().voiceSetup).toMatchObject({ status: 'passed', stage: 'complete', tabId: 11, transcript: 'open a new tab' });
+  expect(local.settings).toMatchObject({ setupVoicePassed: true, setupCommandPassed: true, voicePace: 'relaxed', aiEnabled: true, triggerPhrase: 'hey browser' });
+});
+it.each(['close this tab', 'open a new tab then close this tab', 'do not open a new tab'])('never executes a different or compound command during spoken setup: %s', async text => {
+  local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'START_VOICE_SETUP' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text, final: true, spoken: true }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled(); expect(local.settings).toMatchObject({ setupVoicePassed: false });
+  expect(savedSession().voiceSetup).toMatchObject({ status: 'failed', stage: 'interpretation' });
+});
+it('does not mark spoken setup passed when Chrome cannot verify the resulting tab', async () => {
+  local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'START_VOICE_SETUP' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'open a new tab', final: true, spoken: true }, 'src/offscreen/offscreen.html');
+  expect(create).toHaveBeenCalledOnce(); expect(local.settings).toMatchObject({ setupVoicePassed: false });
+  expect(savedSession().voiceSetup).toMatchObject({ status: 'failed', stage: 'browser' });
+});
+it('cancels spoken setup and ignores a late final result', async () => {
+  local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'START_VOICE_SETUP' }); const id = savedSession().active!.id;
+  await request({ target: 'background', type: 'CANCEL_VOICE_SETUP', id });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: id, text: 'open a new tab', final: true, spoken: true }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().voiceSetup?.status).toBe('cancelled'); expect(close).toHaveBeenCalledOnce();
+});
+it('keeps typed setup separate and refuses spoken practice before permission', async () => {
+  expect((await request({ target: 'background', type: 'START_VOICE_SETUP' })).ok).toBe(false);
+  expect(chrome.alarms.create).not.toHaveBeenCalled(); expect(savedSession()?.active).toBeUndefined();
+  await request({ target: 'background', type: 'RUN_SETUP_COMMAND' });
+  expect(local.settings).toMatchObject({ setupCommandPassed: true, setupVoicePassed: false });
+});
+it('asks before choosing between two meaningfully different speech transcripts', async () => {
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
+  vi.mocked(chrome.tabs.get).mockImplementation(async () => ({ ...tab }) as chrome.tabs.Tab);
+  Object.assign(chrome.tabs, { update: vi.fn(async (_id: number, properties: chrome.tabs.UpdateProperties) => { Object.assign(tab, properties); return { ...tab } as chrome.tabs.Tab; }) });
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'await speech' }); const id = savedSession().active!.id;
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: id, text: 'mute this tab', alternatives: ['pin this tab'], spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  const question = savedSession().question!;
+  expect(question.kind).toBe('speech'); expect(question.choices.map(choice => choice.label)).toEqual(['mute this tab', 'pin this tab']); expect(chrome.tabs.update).not.toHaveBeenCalled();
+  await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'second' }, 'src/popup/sidepanel.html');
+  expect(chrome.tabs.update).toHaveBeenCalledExactlyOnceWith(1, { pinned: true }); expect(savedSession().hud.phase).toBe('success');
+  expect((await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'first' })).ok).toBe(false);
+});
+it('requires a choice when a lower-ranked transcript is the only supported command', async () => {
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'await speech' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pen this tab', alternatives: ['pin this tab'], spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().question?.choices.map(choice => choice.label)).toEqual(['pin this tab']); expect(create).not.toHaveBeenCalled();
+});
+it('preserves completed steps and resumes only after an explicit site grant and resume', async () => {
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
+  vi.mocked(chrome.tabs.get).mockImplementation(async id => ({ ...tab, id }) as chrome.tabs.Tab);
+  Object.assign(chrome.tabs, { update: vi.fn(async (_id: number, properties: chrome.tabs.UpdateProperties) => { Object.assign(tab, properties); return { ...tab } as chrome.tabs.Tab; }) });
+  const inject = vi.fn(async (): Promise<chrome.scripting.InjectionResult[]> => { throw new Error('Missing host permission'); });
+  Object.assign(chrome, { scripting: { executeScript: inject } });
+  vi.mocked(chrome.permissions.contains).mockImplementation(async () => false);
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'pin this tab then scroll down then open a new tab' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pin this tab then scroll down then open a new tab', final: true }, 'src/offscreen/offscreen.html');
+  const recovery = savedSession().recovery!;
+  expect(recovery.kind).toBe('site-access'); expect(recovery.actions.map(action => action.action)).toEqual(['page_action', 'create_tab']);
+  expect(savedSession().progress?.steps.map(step => step.status)).toEqual(['completed', 'failed', 'skipped']);
+  expect((await request({ target: 'background', type: 'RESUME_COMMAND', id: recovery.id })).ok).toBe(false);
+  expect(create).not.toHaveBeenCalled();
+  vi.mocked(chrome.permissions.contains).mockImplementation(async () => true);
+  inject.mockResolvedValue([{ frameId: 0, documentId: 'test-document' }]);
+  vi.mocked(chrome.tabs.sendMessage).mockResolvedValue({ ok: true, text: 'Scrolled down', focused: true });
+  await request({ target: 'background', type: 'RESUME_COMMAND', id: recovery.id });
+  expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(create).toHaveBeenCalledOnce();
+  expect(savedSession().progress?.steps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
+  expect((await request({ target: 'background', type: 'RESUME_COMMAND', id: recovery.id })).ok).toBe(false);
+});
+it('refuses to resume if the target navigated after the blocked command', async () => {
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
+  vi.mocked(chrome.tabs.get).mockImplementation(async () => ({ ...tab }) as chrome.tabs.Tab);
+  Object.assign(chrome, { scripting: { executeScript: vi.fn(async () => { throw new Error('Missing permission'); }) } });
+  vi.mocked(chrome.permissions.contains).mockImplementation(async () => false);
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'scroll down' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'scroll down', final: true }, 'src/offscreen/offscreen.html');
+  const id = savedSession().recovery!.id;
+  tab.url = 'https://example.com/different'; vi.mocked(chrome.permissions.contains).mockImplementation(async () => true);
+  const reply = await request({ target: 'background', type: 'RESUME_COMMAND', id });
+  expect(reply).toMatchObject({ ok: false, error: expect.stringContaining('page changed') });
+});
+it('offers a new target explicitly and validates the chosen tab before continuing', async () => {
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
+  vi.mocked(chrome.tabs.get).mockImplementation(async () => ({ ...tab }) as chrome.tabs.Tab);
+  vi.mocked(chrome.tabs.query).mockResolvedValue([tab] as chrome.tabs.Tab[]);
+  Object.assign(chrome.tabs, { update: vi.fn(async (_id: number, properties: chrome.tabs.UpdateProperties) => { Object.assign(tab, properties); return { ...tab } as chrome.tabs.Tab; }) });
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'pin missingtarget' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pin missingtarget', final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().recovery?.kind).toBe('missing-target');
+  await request({ target: 'background', type: 'CHOOSE_RECOVERY_TAB', id: savedSession().recovery!.id });
+  expect(chrome.tabs.update).not.toHaveBeenCalled();
+  const question = savedSession().question!;
+  tab.url = 'https://example.com/changed';
+  await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'first' });
+  expect(chrome.tabs.update).not.toHaveBeenCalled(); expect(savedSession().hud.text).toContain('chosen tab changed');
+});
+it('does not offer automatic resume when Chrome cannot confirm a mutation', async () => {
+  chrome.tabs.update = vi.fn(async () => ({ id: 1, windowId: 1 }) as chrome.tabs.Tab);
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'pin this tab' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pin this tab', final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().recovery).toMatchObject({ kind: 'unknown-outcome', actions: [] });
+  expect((await request({ target: 'background', type: 'RESUME_COMMAND', id: savedSession().recovery!.id })).ok).toBe(false);
+  expect(chrome.tabs.update).toHaveBeenCalledOnce();
+});
+it('allows basic preferences to be saved while an unused AI configuration is incomplete', async () => {
+  const settings = { ...defaultSettings, aiEnabled: false, aiProvider: 'compatible' as const, aiBaseUrl: '', aiModel: '', language: 'en-GB' as const };
+  expect((await request({ target: 'background', type: 'SAVE_SETTINGS', settings })).ok).toBe(true);
+  const reply = await request({ target: 'background', type: 'GET_STATE' });
+  expect(reply.ok && reply.state?.settings.language).toBe('en-GB'); expect(reply.ok && reply.state?.hasApiKey).toBe(false);
+  expect(chrome.permissions.contains).not.toHaveBeenCalled();
 });

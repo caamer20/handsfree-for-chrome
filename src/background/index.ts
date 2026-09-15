@@ -1,3 +1,7 @@
+import { CommandFailure } from '../common/recovery';
+import { isSetupCommand } from '../common/setup';
+import { speechChoices, spokenCorrection } from '../common/speech-intent';
+import { LOCAL_AI_AVAILABLE } from '../common/build';
 import type { ProgressEvent } from '../common/progress';
 import { diagnosticsFor } from '../common/diagnostics';
 import { prepareProgress, pauseProgress, completeReviewedProgress } from './progress';
@@ -64,7 +68,7 @@ async function touch(): Promise<void> {
   else await chrome.alarms.clear(IDLE_ALARM);
 }
 async function finish(state: HudState, request?: ActiveRequest, transcript?: string): Promise<void> {
-  await setSession({ active: null });
+  await setSession({ active: null, ...(transcript ? { transcript } : {}) });
   await chrome.alarms.clear(WATCHDOG_ALARM);
   await hud(state, request?.tabId);
   if (state.phase === 'success' || state.phase === 'error') await addLog(state.text, state.phase === 'success', transcript);
@@ -74,12 +78,12 @@ async function finish(state: HudState, request?: ActiveRequest, transcript?: str
 }
 async function stop(text = 'Microphone off. Ready when you are.', phase: HudState['phase'] = 'idle'): Promise<void> {
   abortRunning();
-  const { active, pending, question, conversation, progress } = await getSession();
+  const { active, pending, question, conversation, progress, voiceSetup } = await getSession();
   const interruptedId = active?.id ?? pending?.request.id ?? question?.request.id ?? (progress?.status === 'running' ? progress.id : undefined);
   if (interruptedId) await pauseProgress(interruptedId, 'cancelled', 'Stopped. Confirmed completed steps remain completed.');
   await cancelPage(conversation.dictation ?? conversation.page);
   conversation.dictation = null; conversation.page = null;
-  await setSession({ active: null, pending: null, question: null, capture: null, conversation });
+  await setSession({ active: null, pending: null, question: null, capture: null, recovery: null, conversation, ...(voiceSetup?.status === 'running' ? { voiceSetup: { ...voiceSetup, status: phase === 'error' ? 'failed' : 'cancelled', detail: text } } : {}) });
   for (const controller of remoteRequests.values()) controller.abort();
   remoteRequests.clear();
   await chrome.alarms.clear(CAPTURE_ALARM);
@@ -98,7 +102,7 @@ async function newRequest(): Promise<ActiveRequest> {
 }
 async function begin(request: ActiveRequest): Promise<void> {
   const { progress } = await getSession();
-  await setSession({ active: request, ...(progress?.id !== request.id ? { progress: null } : {}) });
+  await setSession({ active: request, transcript: null, recovery: null, ...(progress?.id !== request.id ? { progress: null } : {}) });
   await chrome.alarms.create(WATCHDOG_ALARM, { when: Date.now() + MAX_COMMAND_MS });
   await touch();
 }
@@ -184,8 +188,62 @@ async function executePlan(actions: ChromeAction[], source: 'grammar' | 'model',
       return { ok: true, pendingReview: true };
     }
     await pauseProgress(request.id, 'failed', errorText(error));
+    if (error instanceof CommandFailure) await setSession({ recovery: {
+      id: crypto.randomUUID(), at: Date.now(), kind: error.kind, detail: error.message,
+      request, transcript, source, actions: error.remaining, context: error.context ?? context, overrides,
+      origin: error.origin, targetUrl: error.targetUrl, choiceKey: error.choiceKey,
+    } });
     await finish({ phase: 'error', text: errorText(error) }, request, transcript);
   } finally { await persistExecution(env); executing.delete(request.id); }
+  return { ok: true };
+}
+async function handleTranscript(request: ActiveRequest, raw: string, spoken = false, alternatives: string[] = []): Promise<Reply> {
+  const session = await getSession();
+  if (session.voiceSetup?.id === request.id) {
+    const setup = { ...session.voiceSetup, transcript: raw };
+    if (!isSetupCommand(raw) || alternatives.some(text => !isSetupCommand(text))) {
+      const detail = `I heard “${raw}”. For this practice, say only “open a new tab”. No command was run.`;
+      await setSession({ voiceSetup: { ...setup, status: 'failed', stage: 'interpretation', detail } });
+      await finish({ phase: 'error', text: detail.slice(0, 500) }, request);
+      return { ok: true, handled: true };
+    }
+    await setSession({ voiceSetup: { ...setup, stage: 'browser', detail: 'Speech understood. Opening and checking the practice tab…' } });
+    await executePlan([{ action: 'create_tab', params: { url: 'chrome://newtab/', active: false } }], 'grammar', request, raw);
+    const result = await getSession(); const created = result.conversation.targets[0];
+    const tab = created ? await chrome.tabs.get(created.id).catch(() => undefined) : undefined;
+    if (result.hud.phase !== 'success' || !tab?.id || tab.id === request.tabId || tab.windowId !== request.windowId || (tab.url ?? tab.pendingUrl) !== 'chrome://newtab/') {
+      const detail = result.hud.phase === 'error' ? result.hud.text : 'Speech was understood, but the practice tab could not be verified. Check the opened tabs before trying again.';
+      await setSession({ voiceSetup: { ...setup, status: 'failed', stage: 'browser', detail } });
+      await finish({ phase: 'error', text: detail }, request); return { ok: true, handled: true };
+    }
+    await chrome.storage.local.set({ settings: { ...await getSettings(), setupCommandPassed: true, setupVoicePassed: true, micGranted: true } });
+    await setSession({ voiceSetup: { ...setup, status: 'passed', stage: 'complete', tabId: tab.id, detail: 'You did it. Your spoken command opened a new tab, and Chrome confirmed it. The microphone is off.' } });
+    return { ok: true, handled: true };
+  }
+  if (isNegatedCommand(raw)) { await finish({ phase: 'idle', text: 'No changes made. Say the action you want to run.' }, request); return { ok: true, handled: true }; }
+  const routines = await getRoutines(); const macros = await getMacros();
+  if (spoken) {
+    const choices = speechChoices(raw, alternatives, text => {
+      const routine = matchRoutine(routines, text); if (routine) return `routine:${routine.routine.id}:${JSON.stringify(routine.values)}`;
+      const macro = findMacro(macros, text); if (macro) return `macro:${macro.id}`;
+      const actions = parseCommand(text); return actions ? JSON.stringify(actions) : undefined;
+    });
+    if (choices.length) {
+      const prompt = `I heard more than one possible command. Which did you mean?`;
+      await setSession({ question: { id: crypto.randomUUID(), speechChoice: true, kind: 'speech', key: 'speech', prompt, choices: choices.map((value, i) => ({ id: `speech-${i}`, label: value, value })), request, actions: [], context: request, overrides: {}, at: Date.now() } });
+      await finish({ phase: 'clarify', text: `${prompt} ${choices.map((text, i) => `${i + 1}. ${text}`).join('; ')}`.slice(0, 500) }, request);
+      return { ok: true, handled: true, needsClarification: true };
+    }
+  }
+  // A saved exact phrase retains precedence over conversational rewriting.
+  const text = spoken && !matchRoutine(routines, raw) && !findMacro(macros, raw) ? spokenCorrection(raw) : raw;
+  const intent = interruptIntent(text); if (intent) return interrupt(intent.replacement, intent.stopListening);
+  const routine = matchRoutine(routines, text);
+  if (routine) return previewRoutine(routine.routine, request, routine.values);
+  const macro = findMacro(macros, text);
+  if (macro) { await executeMacro(macro, request, text); return { ok: true, handled: true }; }
+  const actions = parseCommand(text);
+  if (actions) { const result = await executePlan(actions, 'grammar', request, text); return { ...result, ...(result.ok ? { handled: true } : {}) }; }
   return { ok: true };
 }
 async function answer(questionId: string, text: string): Promise<Reply> {
@@ -194,6 +252,10 @@ async function answer(questionId: string, text: string): Promise<Reply> {
   const choice = answerChoice(question, text);
   if (!choice) { await hud({ phase: 'clarify', text: 'Say an option number or a more specific title, or choose below.' }, question.request.tabId); return { ok: true, handled: true, needsClarification: true }; }
   await setSession({ question: null }); await begin({ ...question.request, startedAt: Date.now() });
+  if (question.speechChoice && choice.value) {
+    await setSession({ transcript: choice.value });
+    return handleTranscript(question.request, choice.value, true);
+  }
   if (question.routineInput) { const { routine, values, name } = question.routineInput; return previewRoutine(routine, question.request, { ...values, [name]: choice.value! }); }
   const reply = await executePlan(question.actions, 'grammar', question.request, `Answered: ${choice.label}`, question.context, { ...question.overrides, [question.key]: choice });
   return { ...reply, ...(reply.ok ? { handled: true } : {}) };
@@ -306,9 +368,15 @@ async function snapshot(readOnly = false): Promise<AppState> {
   const [session, settings, macros, log, commands, engineOpen, library] = await Promise.all([getSession(), getSettings(), getMacros(), getLog(), chrome.commands.getAll(), hasOffscreen(), getLibrary()]);
   if (session.capture && !engineOpen && !readOnly) { await stop('The microphone stopped. Press the shortcut to start again.', 'error'); return snapshot(); }
   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  const permissionTab = activeTab?.url?.startsWith('http') ? activeTab : session.permissionTabId ? await chrome.tabs.get(session.permissionTabId).catch(() => undefined) : undefined;
+  const permissionTab = activeTab?.url?.startsWith('http') ? activeTab : activeTab?.url?.startsWith(chrome.runtime.getURL('src/popup/')) && session.permissionTabId ? await chrome.tabs.get(session.permissionTabId).catch(() => undefined) : undefined;
   let activeSiteOrigin: string | undefined; try { if (permissionTab?.url && isSafeUrl(permissionTab.url)) activeSiteOrigin = new URL(permissionTab.url).origin + '/*'; } catch { /* No website permission target. */ }
-  return { progress: session.progress, routines: await getRoutines(), library, question: session.question, dictation: session.conversation.dictation, contextTargets: session.conversation.targets, activeSiteOrigin, settings, macros, log, hud: session.hud, pending: session.pending, shortcut: commands.find(c => c.name === 'toggle-listening')?.shortcut ?? '', engineOpen, listening: !!session.capture || (session.hud.phase === 'listening' && !!session.active), hasApiKey: !!(await getApiKey(settings)) };
+  const recovery = session.recovery;
+  const recoveryView = recovery && Date.now() - recovery.at < 5 * 60_000 ? {
+    id: recovery.id, kind: recovery.kind, detail: recovery.detail, origin: recovery.origin,
+    canResume: recovery.kind === 'site-access' && recovery.actions.length > 0 && !!recovery.origin && await chrome.permissions.contains({ origins: [recovery.origin] }),
+    canChooseTab: recovery.kind === 'missing-target' && recovery.actions[0]?.action === 'find_tab' && !!recovery.choiceKey,
+  } : null;
+  return { recovery: recoveryView, voiceSetup: session.voiceSetup, localAiAvailable: LOCAL_AI_AVAILABLE, transcript: session.transcript, currentWindowId: activeTab?.windowId, activeTabTitle: activeTab?.title, progress: session.progress, routines: await getRoutines(), library, question: session.question, dictation: session.conversation.dictation, contextTargets: session.conversation.targets, activeSiteOrigin, settings, macros, log, hud: session.hud, pending: session.pending, shortcut: commands.find(c => c.name === 'toggle-listening')?.shortcut ?? '', engineOpen, listening: !!session.capture || (session.hud.phase === 'listening' && !!session.active), hasApiKey: !!(await getApiKey(settings)) };
 }
 async function cloud(message: Extract<Message, { type: 'PARSE_CLOUD' | 'TEST_AI_CONNECTION' }>): Promise<Reply> {
   const id = message.type === 'PARSE_CLOUD' ? message.requestId : 'connection-test';
@@ -343,6 +411,56 @@ async function cloud(message: Extract<Message, { type: 'PARSE_CLOUD' | 'TEST_AI_
 async function handle(message: Message): Promise<Reply> {
   if (message.target !== 'background') return { ok: false, error: 'Wrong destination' };
   switch (message.type) {
+    case 'RESUME_COMMAND':
+    case 'CHOOSE_RECOVERY_TAB': {
+      const session = await getSession(); const recovery = session.recovery;
+      if (!recovery || recovery.id !== message.id || Date.now() - recovery.at > 5 * 60_000) throw new Error('That recovery expired. Edit the command and review completed steps before trying again.');
+      if (session.active || session.pending || session.question) throw new Error('Finish the current command first.');
+      if (message.type === 'CHOOSE_RECOVERY_TAB') {
+        if (recovery.kind !== 'missing-target' || recovery.actions[0]?.action !== 'find_tab' || !recovery.choiceKey) throw new Error('This command cannot be retargeted safely. Edit it instead.');
+        const tabs = (await chrome.tabs.query({})).filter(tab => tab.id !== undefined).sort((a, b) => Number(b.windowId === recovery.context.windowId) - Number(a.windowId === recovery.context.windowId)).slice(0, 50);
+        if (!tabs.length) throw new Error('No open tabs are available.');
+        await setSession({ recovery: null, question: { id: crypto.randomUUID(), prompt: 'Choose an open tab for the remaining command. Completed steps will stay completed.', kind: 'tabs', key: recovery.choiceKey, choices: tabs.map(tab => ({ id: String(tab.id), label: tab.title || 'Untitled tab', detail: `Window ${tab.windowId}`, tabs: [{ id: tab.id!, windowId: tab.windowId, title: tab.title ?? '', url: tab.url ?? '' }] })), request: recovery.request, actions: recovery.actions, context: recovery.context, overrides: recovery.overrides, at: Date.now() } });
+        await finish({ phase: 'clarify', text: 'Choose a tab below, or say its option number. Completed steps will stay completed.' }, recovery.request);
+        break;
+      }
+      if (recovery.kind !== 'site-access' || !recovery.actions.length || !recovery.origin || !recovery.targetUrl) throw new Error('This command cannot be resumed safely. Review what happened and edit it instead.');
+      if (!(await chrome.permissions.contains({ origins: [recovery.origin] }))) throw new Error('Allow the requested site before resuming.');
+      const target = await chrome.tabs.get(recovery.context.tabId).catch(() => undefined);
+      if (!target || target.windowId !== recovery.context.windowId || target.url !== recovery.targetUrl || target.pendingUrl) throw new Error('The target page changed. Edit a fresh command instead of resuming this one.');
+      // Consume the recovery once, preserving the original target and completed steps.
+      await setSession({ recovery: null }); await begin({ ...recovery.request, startedAt: Date.now() });
+      await setSession({ transcript: recovery.transcript });
+      return executePlan(recovery.actions, recovery.source, recovery.request, recovery.transcript, recovery.context, recovery.overrides);
+    }
+    case 'START_VOICE_SETUP': {
+      const session = await getSession();
+      if (session.active || session.capture || session.pending || session.question) throw new Error('Finish the current command or stop listening before the spoken practice.');
+      const settings = await getSettings();
+      if (!settings.micGranted) throw new Error('Enable the microphone in this setup guide before the spoken practice.');
+      const request = await newRequest(); await begin(request);
+      await chrome.storage.local.set({ settings: { ...settings, voicePace: message.pace ?? settings.voicePace, setupVoicePassed: false } });
+      await setSession({ voiceSetup: { id: request.id, status: 'running', stage: 'microphone', detail: 'Starting the microphone…' } });
+      await hud({ phase: 'listening', text: 'Say “open a new tab”.' }, request.tabId);
+      try {
+        await ensureOffscreen();
+        const reply = await withTimeout(send({ target: 'offscreen', type: 'START_LISTENING', requestId: request.id, settings: { ...settings, voicePace: message.pace ?? settings.voicePace, aiEnabled: false, triggerPhrase: '', listeningMode: 'single' } }), 10_000, 'The voice engine did not respond. Try again.');
+        if (!reply.ok) throw new Error(reply.error);
+      } catch (error) { await stop(errorText(error), 'error'); throw error; }
+      break;
+    }
+    case 'CANCEL_VOICE_SETUP': {
+      const session = await getSession();
+      if (session.voiceSetup?.id === message.id && session.voiceSetup.status === 'running') await stop('Spoken practice stopped.');
+      break;
+    }
+    case 'ENGINE_LISTENING': {
+      const session = await getSession();
+      if (session.active?.id !== message.requestId) return { ok: true, handled: true };
+      if (session.voiceSetup?.id === message.requestId) await setSession({ voiceSetup: { ...session.voiceSetup, stage: 'speech', detail: 'Listening. Say “open a new tab”.' } });
+      await hud({ phase: 'listening', text: session.voiceSetup?.id === message.requestId ? 'Say “open a new tab”.' : 'Listening…' }, session.active.tabId);
+      break;
+    }
     case 'IMPORT_ROUTINES': await addImportedRoutines(message.routines); break;
     case 'SAVE_ROUTINE': await saveRoutine(message.routine); break;
     case 'DELETE_ROUTINE': await deleteRoutine(message.id); break;
@@ -398,8 +516,9 @@ async function handle(message: Message): Promise<Reply> {
     case 'OPEN_PAGE': await openPage(message.page); break;
     case 'CLEAR_LOG': await chrome.storage.local.set({ log: [] }); break;
     case 'SAVE_SETTINGS': {
-      validateProvider(message.settings);
-      if (message.settings.aiProvider !== 'local' && !(await chrome.permissions.contains({ origins: [providerOrigin(message.settings)] }))) throw new Error('Allow access to your API provider when saving preferences.');
+      if (message.settings.aiEnabled || message.apiKey) validateProvider(message.settings);
+      if (message.settings.aiEnabled && message.settings.aiProvider === 'local' && !LOCAL_AI_AVAILABLE) throw new Error('Local AI is not included in this edition. Choose a cloud provider or leave AI off.');
+      if ((message.settings.aiEnabled || message.apiKey) && message.settings.aiProvider !== 'local' && !(await chrome.permissions.contains({ origins: [providerOrigin(message.settings)] }))) throw new Error('Allow access to your API provider when saving preferences.');
       const previous = await getSettings();
       const session = await getSession();
       if (session.active || session.capture || session.pending || remoteRequests.size) await stop('Preferences changed. Press the shortcut to start listening again.');
@@ -439,7 +558,7 @@ async function handle(message: Message): Promise<Reply> {
       await setSession({ capture: { ...session.capture, lastSeen: Date.now() } });
       if (message.type === 'CAPTURE_STATUS') {
         if (message.fatal) await stop(message.text, 'error');
-        else if (!session.active && !session.pending && !session.question) {
+        else if (!session.active && !session.pending && !session.question && session.hud.phase !== 'error') {
           const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           await hud({ phase: 'listening', text: message.text }, tab?.id);
         }
@@ -453,19 +572,19 @@ async function handle(message: Message): Promise<Reply> {
       const { active, capture } = await getSession();
       if (!active || active.id !== message.requestId) return { ok: true, handled: true };
       if (message.type === 'VOICE_TRANSCRIPT') {
+        await setSession({ transcript: message.text });
         if (message.final) {
-          if (isNegatedCommand(message.text)) { await finish({ phase: 'idle', text: 'No changes made. Say the action you want to run.' }, active); return { ok: true, handled: true }; }
-          const intent = interruptIntent(message.text); if (intent) return interrupt(intent.replacement, intent.stopListening);
-          const routine = matchRoutine(await getRoutines(), message.text);
-          if (routine) return previewRoutine(routine.routine, active, routine.values);
-          const macro = findMacro(await getMacros(), message.text);
-          if (macro) { await executeMacro(macro, active, message.text); return { ok: true, handled: true }; }
-          const actions = parseCommand(message.text);
-          if (actions) { const result = await executePlan(actions, 'grammar', active, message.text); return { ...result, ...(result.ok ? { handled: true } : {}) }; }
+          const result = await handleTranscript(active, message.text, message.spoken, message.alternatives);
+          if (!result.ok || result.handled || result.pendingReview || result.needsClarification) return result;
+        } else {
+          const { voiceSetup } = await getSession();
+          if (voiceSetup?.id === active.id) await setSession({ voiceSetup: { ...voiceSetup, stage: 'speech', transcript: message.text, detail: 'Listening… finish with “open a new tab”.' } });
         }
         await hud({ phase: message.final ? 'thinking' : 'listening', text: message.final ? 'Thinking…' : message.text }, active.tabId);
       } else if (message.type === 'ENGINE_STATUS') await hud({ phase: 'thinking', text: message.text }, active.tabId);
       else if (message.type === 'ENGINE_ERROR') {
+        const { voiceSetup } = await getSession();
+        if (voiceSetup?.id === active.id) await setSession({ voiceSetup: { ...voiceSetup, status: 'failed', detail: message.error } });
         if (!capture) await closeOffscreen();
         await finish({ phase: 'error', text: message.error }, active);
       } else {
@@ -477,14 +596,22 @@ async function handle(message: Message): Promise<Reply> {
   }
   return { ok: true };
 }
-const engineTypes = new Set(['VOICE_TRANSCRIPT', 'ENGINE_STATUS', 'ENGINE_ERROR', 'EXECUTE_ACTIONS', 'PARSE_CLOUD', 'BEGIN_VOICE_COMMAND', 'CAPTURE_HEARTBEAT', 'CAPTURE_STATUS', 'DICTATION_TEXT']);
+const engineTypes = new Set(['ENGINE_LISTENING', 'VOICE_TRANSCRIPT', 'ENGINE_STATUS', 'ENGINE_ERROR', 'EXECUTE_ACTIONS', 'PARSE_CLOUD', 'BEGIN_VOICE_COMMAND', 'CAPTURE_HEARTBEAT', 'CAPTURE_STATUS', 'DICTATION_TEXT']);
 chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (reply: Reply) => void): boolean => {
   const parsed = messageSchema.safeParse(raw);
   if (!parsed.success || parsed.data.target !== 'background' || sender.id !== chrome.runtime.id) return false;
   const message = parsed.data; const path = sender.url?.split('?')[0];
-  const trusted = message.type === 'INTERRUPT_COMMAND' ? [chrome.runtime.getURL(OFFSCREEN_PATH), chrome.runtime.getURL('src/popup/popup.html')].includes(path ?? '') : engineTypes.has(message.type) ? path === chrome.runtime.getURL(OFFSCREEN_PATH)
-    : [chrome.runtime.getURL('src/popup/popup.html'), chrome.runtime.getURL('src/popup/onboarding.html')].includes(path ?? '');
+  const trusted = message.type === 'INTERRUPT_COMMAND' ? [chrome.runtime.getURL(OFFSCREEN_PATH), chrome.runtime.getURL('src/popup/popup.html'), chrome.runtime.getURL('src/popup/sidepanel.html'), chrome.runtime.getURL('src/popup/onboarding.html')].includes(path ?? '') : engineTypes.has(message.type) ? path === chrome.runtime.getURL(OFFSCREEN_PATH)
+    : [chrome.runtime.getURL('src/popup/popup.html'), chrome.runtime.getURL('src/popup/sidepanel.html'), chrome.runtime.getURL('src/popup/onboarding.html')].includes(path ?? '');
   if (!trusted) { respond({ ok: false, error: 'Untrusted message source' }); return false; }
+  if (message.type === 'CANCEL_VOICE_SETUP') {
+    void (async () => {
+      const session = await getSession();
+      if (session.voiceSetup?.id !== message.id || session.voiceSetup.status !== 'running') return { ok: true } as Reply;
+      abortRunning(); return serialize(() => handle(message));
+    })().then(respond, (error: unknown) => respond({ ok: false, error: errorText(error) }));
+    return true;
+  }
   if (message.type === 'INTERRUPT_COMMAND') {
     void (async () => {
       if (message.sessionId && (await getSession()).capture?.id !== message.sessionId) return { ok: true, handled: true } as Reply;
@@ -499,6 +626,13 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (reply: Rep
 });
 chrome.commands.onCommand.addListener(command => {
   if (command === 'toggle-listening') { abortRunning(); void serialize(() => start()).catch(async error => { await hud({ phase: 'error', text: errorText(error) }); }); }
+});
+chrome.tabs.onUpdated?.addListener((tabId, change) => {
+  if (!change.url && change.status !== 'loading') return;
+  void serialize(async () => {
+    const { recovery } = await getSession();
+    if (recovery?.kind === 'site-access' && recovery.context.tabId === tabId) await setSession({ recovery: null });
+  });
 });
 chrome.alarms.onAlarm.addListener(alarm => {
   if (![IDLE_ALARM, WATCHDOG_ALARM, CAPTURE_ALARM].includes(alarm.name)) return;

@@ -1,0 +1,213 @@
+{
+  "version": "1.8.0",
+  "browser": "Chrome for Testing 153.0.8010.12",
+  "platform": "macOS x64",
+  "browserSuite": {
+    "startTime": "2026-09-15T05:03:01.052Z",
+    "duration": 216368.918,
+    "expected": 46,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "upgradeSuite": {
+    "startTime": "2026-09-15T05:01:46.544Z",
+    "duration": 12197.643,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "unitTests": {
+    "passed": 520,
+    "files": 21
+  },
+  "productionDependencyAudit": "0 vulnerabilities",
+  "cases": [
+    {
+      "title": "common task: Open a new tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Pin this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Unpin this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Mute this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Unmute this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Zoom in",
+      "passed": true
+    },
+    {
+      "title": "common task: Zoom to 125 percent",
+      "passed": true
+    },
+    {
+      "title": "common task: Reset zoom",
+      "passed": true
+    },
+    {
+      "title": "common task: Switch to the Research tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Next tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Previous tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Last tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Go to tab two",
+      "passed": true
+    },
+    {
+      "title": "common task: Move this tab to the end",
+      "passed": true
+    },
+    {
+      "title": "common task: Move this tab right",
+      "passed": true
+    },
+    {
+      "title": "common task: Duplicate this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Close this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Close tab two",
+      "passed": true
+    },
+    {
+      "title": "common task: Close all other tabs",
+      "passed": true
+    },
+    {
+      "title": "common task: Reopen the last closed tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Bookmark this page",
+      "passed": true
+    },
+    {
+      "title": "common task: Group these tabs as Research",
+      "passed": true
+    },
+    {
+      "title": "common task: Save this workspace as Research",
+      "passed": true
+    },
+    {
+      "title": "common task: Save this for later",
+      "passed": true
+    },
+    {
+      "title": "common task: Fill the search box with black holes",
+      "passed": true
+    },
+    {
+      "title": "common task: Clear the search field",
+      "passed": true
+    },
+    {
+      "title": "common task: Check the Remember me checkbox",
+      "passed": true
+    },
+    {
+      "title": "common task: Choose Canada from the Country dropdown",
+      "passed": true
+    },
+    {
+      "title": "common task: Show links",
+      "passed": true
+    },
+    {
+      "title": "common task: Scroll down a little",
+      "passed": true
+    },
+    {
+      "title": "installs the production package and executes a typed command through the real engine",
+      "passed": true
+    },
+    {
+      "title": "saves preferences in the real popup and restores them after reopening",
+      "passed": true
+    },
+    {
+      "title": "recreates the real offscreen engine after explicit sleep",
+      "passed": true
+    },
+    {
+      "title": "wakes a stopped Chrome service worker with preferences intact",
+      "passed": true
+    },
+    {
+      "title": "handles synthetic speech failure not-allowed and allows a typed recovery",
+      "passed": true
+    },
+    {
+      "title": "handles synthetic speech failure audio-capture and allows a typed recovery",
+      "passed": true
+    },
+    {
+      "title": "asks about conflicting ASR alternatives before opening any tab",
+      "passed": true
+    },
+    {
+      "title": "requires the trigger, discards a partial command on network loss, and stops continuous speech",
+      "passed": true
+    },
+    {
+      "title": "edits a real page using the temporary grant from Chrome\u2019s extension action",
+      "passed": true
+    },
+    {
+      "title": "records cold/warm command latency and retained engine heap over 20 cycles",
+      "passed": true
+    },
+    {
+      "title": "requests only the blocked site and resumes after a preapproved native consent decision",
+      "passed": true
+    },
+    {
+      "title": "opens the actual persistent side panel and keeps it available across tab changes",
+      "passed": true
+    },
+    {
+      "title": "opens the native extension popup at Chrome\u2019s actual popup dimensions",
+      "passed": true
+    },
+    {
+      "title": "makes website-opening routines a type of routine and keeps AI advanced",
+      "passed": true
+    },
+    {
+      "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+      "passed": true
+    },
+    {
+      "title": "shows speech interpretation failure without performing a different action",
+      "passed": true
+    }
+  ],
+  "limits": "Typed commands and synthetic ASR in disposable profiles. Not live microphone accuracy, native OS permission UI, hardware sleep/wake or battery measurement."
+}

@@ -67,6 +67,7 @@ export const settingsSchema = z.object({
   aiBaseUrl: z.string().trim().max(1000).default(''),
   reviewAiActions: z.boolean().default(false),
   listeningMode: z.enum(['continuous', 'single']).default('continuous'),
+  voicePace: z.enum(['natural', 'relaxed']).default('natural'),
   reuseTabs: z.boolean().default(true),
   learnTopSites: z.boolean().default(false),
   feedback: z.enum(['none', 'sound', 'speech']).default('none'),
@@ -74,6 +75,7 @@ export const settingsSchema = z.object({
   saveTranscripts: z.boolean().default(false),
   micGranted: z.boolean().default(false),
   setupCommandPassed: z.boolean().default(false),
+  setupVoicePassed: z.boolean().default(false),
 }).strict();
 export type Settings = z.infer<typeof settingsSchema>;
 export const defaultSettings = settingsSchema.parse({});
@@ -85,6 +87,11 @@ export const hudSchema = z.object({
 export type HudState = z.infer<typeof hudSchema>;
 
 export const messageSchema = z.discriminatedUnion('type', [
+  z.object({ target: z.literal('background'), type: z.literal('RESUME_COMMAND'), id: z.string().uuid() }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('CHOOSE_RECOVERY_TAB'), id: z.string().uuid() }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('START_VOICE_SETUP'), pace: z.enum(['natural', 'relaxed']).optional() }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('CANCEL_VOICE_SETUP'), id: z.string().uuid() }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('ENGINE_LISTENING'), requestId: z.string().uuid() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('MICROPHONE_READY') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('GET_DIAGNOSTICS') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('RUN_SETUP_COMMAND') }).strict(),
@@ -129,7 +136,7 @@ export const messageSchema = z.discriminatedUnion('type', [
   z.object({ target: z.literal('offscreen'), type: z.literal('PARSE_TEXT'), requestId: z.string().uuid(), text, settings: settingsSchema }).strict(),
   z.object({ target: z.literal('offscreen'), type: z.literal('DISPOSE_ENGINE') }).strict(),
   z.object({ target: z.literal('offscreen'), type: z.literal('PING') }).strict(),
-  z.object({ target: z.literal('background'), type: z.literal('VOICE_TRANSCRIPT'), requestId: z.string().uuid(), text: z.string().max(500), final: z.boolean() }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('VOICE_TRANSCRIPT'), requestId: z.string().uuid(), text: z.string().max(500), final: z.boolean(), spoken: z.boolean().optional(), alternatives: z.array(text).max(3).optional() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('EXECUTE_ACTIONS'), requestId: z.string().uuid(), actions: actionsSchema, source: z.enum(['grammar', 'model']), transcript: text }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('ENGINE_ERROR'), requestId: z.string().uuid(), error: text }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('ENGINE_STATUS'), requestId: z.string().uuid(), text }).strict(),

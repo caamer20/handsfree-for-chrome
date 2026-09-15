@@ -2,7 +2,8 @@ HandsFree for Chrome
 Copyright 2026 HandsFree for Chrome contributors.
 Independent project; not affiliated with Google.
 
-This distribution contains:
+Both editions contain Zod and the HandsFree assets listed below.
+The following model and inference dependencies are included only in the local-AI edition:
 
 Transformers.js 3.x, Hugging Face
 https://github.com/huggingface/transformers.js

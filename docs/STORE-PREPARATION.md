@@ -18,6 +18,7 @@ The ZIP is a candidate package, not a store submission or an approval claim. Com
 | bookmarks | Save pages and find/open bookmarks on command. |
 | sessions | Read recently closed local entries only when asked, to restore one closed tab. No synced-device session access. |
 | offscreen | Run speech recognition and local inference outside the service worker. |
+| sidePanel | Show user-opened persistent controls, current transcript, target, progress, clarification, and Stop beside browser tabs. |
 | storage | Local preferences, macros, aliases, workspace URLs/titles/groups, bounded activity log, session conversation and undo, and pending reviews. |
 | alarms | Worker-safe three-minute auto-sleep, microphone heartbeat, and a command watchdog. |
 | Optional HTTP(S) host access | API provider origins when configured; website origins for user-requested page controls. Settings offers per-site access or explicit all-website access. |
@@ -36,5 +37,5 @@ There is no `windows` permission: ordinary window operations do not require one.
 - Publish PRIVACY.md at a stable HTTPS URL and enter that URL in the store listing.
 - Review Chrome's current data-use disclosure form against the privacy policy, especially Chrome's speech service.
 - Supply required store screenshot and promotional-image dimensions from an installed, tested release.
-- Bundle Apache-2.0, runtime license notices, and the model provenance.
+- Bundle Apache-2.0 and dependency notices; include runtime notices and model provenance in the optional local-AI edition.
 - Keep experimental AI described accurately. Do not claim fully offline transcription or general-purpose natural-language reliability.

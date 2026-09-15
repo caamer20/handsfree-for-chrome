@@ -17,18 +17,24 @@ let feedbackActive = false;
 let feedbackGeneration = 0;
 let feedbackTimer: ReturnType<typeof setTimeout> | undefined;
 let audioContext: AudioContext | undefined;
-interface Capture { id: string; settings: Settings; queue: string[]; pumping: boolean; heartbeat: ReturnType<typeof setInterval>; idle?: ReturnType<typeof setTimeout>; }
+interface Utterance { text: string; alternatives?: string[]; }
+interface Capture { id: string; settings: Settings; queue: Utterance[]; pumping: boolean; heartbeat: ReturnType<typeof setInterval>; idle?: ReturnType<typeof setTimeout>; }
 let capture: Capture | undefined;
 const report = (message: Message): void => { void send(message).catch(() => undefined); };
 const checked = (reply: Reply): Reply & { ok: true } => { if (!reply?.ok) throw new Error(reply && !reply.ok ? reply.error : 'The command handler did not respond.'); return reply; };
-async function process(requestId: string, settings: Settings, suppliedText?: string): Promise<boolean> {
+async function process(requestId: string, settings: Settings, suppliedText?: string, suppliedAlternatives?: string[], spoken = suppliedText === undefined): Promise<boolean> {
   if (busy || disposed) return false;
   busy = true;
   try {
-    const transcript = suppliedText ?? await speech.listen(settings.language, text => report({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId, text, final: false }));
+    let alternatives = suppliedAlternatives ?? [];
+    const transcript = suppliedText ?? await speech.listen(settings.language, text => report({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId, text, final: false }), {
+      pace: settings.voicePace,
+      onStart: () => report({ target: 'background', type: 'ENGINE_LISTENING', requestId }),
+      onAlternatives: candidates => { alternatives = candidates.flatMap(text => { try { return [stripTrigger(text, settings.triggerPhrase)]; } catch { return []; } }); },
+    });
     if (disposed) return false;
     const command = suppliedText === undefined ? stripTrigger(transcript, settings.triggerPhrase) : transcript;
-    const acknowledgement = checked(await send({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId, text: command, final: true }));
+    const acknowledgement = checked(await send({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId, text: command, final: true, ...(spoken ? { spoken: true } : {}), ...(alternatives.length ? { alternatives } : {}) }));
     if (acknowledgement.handled || disposed) return !!(acknowledgement.pendingReview || acknowledgement.needsClarification);
     if (isNegatedCommand(command)) return false;
     const known = parseCommand(command);
@@ -54,10 +60,10 @@ async function pump(session: Capture): Promise<void> {
   clearTimeout(session.idle);
   try {
     while (!disposed && capture === session && session.queue.length) {
-      const text = session.queue.shift(); if (!text) continue;
-      const reply = checked(await send({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId: session.id, text }));
+      const utterance = session.queue.shift(); if (!utterance) continue;
+      const reply = checked(await send({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId: session.id, text: utterance.text }));
       if (disposed || capture !== session) break;
-      const pendingReview = reply.pendingReview || reply.needsClarification || (reply.request ? await process(reply.request.id, session.settings, text) : false);
+      const pendingReview = reply.pendingReview || reply.needsClarification || (reply.request ? await process(reply.request.id, session.settings, utterance.text, utterance.alternatives, true) : false);
       // Speech heard before the review appeared cannot approve that review later.
       if (pendingReview) session.queue.length = 0;
     }
@@ -75,7 +81,7 @@ function startCapture(id: string, settings: Settings): void {
 function listenCapture(session: Capture): void {
   const { id, settings } = session;
   try {
-    microphone.startContinuous(settings.language, text => {
+    microphone.startContinuous(settings.language, (text, alternatives) => {
       if (disposed || capture !== session || feedbackActive) return;
       let controlText = text.trim();
       if (dictating) { try { controlText = stripTrigger(text, settings.triggerPhrase); } catch { /* Dictation controls also work without a trigger. */ } }
@@ -88,10 +94,14 @@ function listenCapture(session: Capture): void {
       const intent = interruptIntent(command);
       if (intent) { session.queue.length = 0; report({ target: 'background', type: 'INTERRUPT_COMMAND', sessionId: id, ...intent }); return; }
       if (session.queue.length >= 3) { status(session, 'Command queue is full. Wait for the current commands to finish.'); return; }
-      session.queue.push(command); void pump(session);
+      const candidates = alternatives?.flatMap(text => { try { return [stripTrigger(text, settings.triggerPhrase)]; } catch { return []; } });
+      session.queue.push({ text: command, ...(candidates?.length ? { alternatives: candidates } : {}) }); void pump(session);
     }, text => { if (!session.pumping) status(session, text); }, text => {
       stopCapture(); report({ target: 'background', type: 'CAPTURE_STATUS', sessionId: id, text, fatal: true });
-    });
+    }, { pace: settings.voicePace, immediate: text => {
+      if (dictating) return false;
+      try { const intent = interruptIntent(stripTrigger(text, settings.triggerPhrase)); return !!intent && !intent.replacement; } catch { return false; }
+    } });
   } catch (error) { stopCapture(); report({ target: 'background', type: 'CAPTURE_STATUS', sessionId: id, text: errorText(error), fatal: true }); }
 }
 function stopCapture(): void {

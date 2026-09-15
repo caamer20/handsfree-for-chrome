@@ -4,6 +4,7 @@ import { pageResultSchema, type PageResult } from '../common/page';
 import type { PageRef } from '../common/conversation';
 import { checkCancelled } from '../common/conversation';
 import { withTimeout } from '../common/messaging';
+import { CommandFailure } from '../common/recovery';
 
 async function message(ref: PageRef, payload: Message): Promise<PageResult> {
   const raw: unknown = await withTimeout(chrome.tabs.sendMessage(ref.tabId, payload, { frameId: ref.frameId, ...(ref.documentId ? { documentId: ref.documentId } : {}) }), 8000, 'The page did not respond. Try reloading it.');
@@ -13,7 +14,7 @@ async function message(ref: PageRef, payload: Message): Promise<PageResult> {
 }
 async function frame(tabId: number, preferred?: PageRef | null): Promise<PageRef> {
   if (preferred?.tabId === tabId) {
-    try { await message(preferred, { target: 'content', type: 'PAGE_PROBE' }); return preferred; } catch { throw new Error('The page changed. Focus the field or show links again.'); }
+    try { await message(preferred, { target: 'content', type: 'PAGE_PROBE' }); return preferred; } catch { throw new CommandFailure('page-changed', 'The page changed. Focus the field or show links again.'); }
   }
   let frames: chrome.scripting.InjectionResult[];
   try { frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content.js'] }); }
@@ -21,8 +22,12 @@ async function frame(tabId: number, preferred?: PageRef | null): Promise<PageRef
     try { frames = await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); }
     catch {
       const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-      let host = 'this site'; try { host = new URL(tab?.url ?? '').hostname; } catch { /* Keep plain fallback. */ }
-      throw new Error(`Page controls need access to ${host}. Open HandsFree Settings and allow this site. Chrome internal pages cannot use page controls.`);
+      let url: URL | undefined; try { url = new URL(tab?.url ?? ''); } catch { /* No current site. */ }
+      if (!url || !['http:', 'https:'].includes(url.protocol) || url.hostname === 'chromewebstore.google.com' || (url.hostname === 'chrome.google.com' && url.pathname.startsWith('/webstore'))) throw new CommandFailure('restricted-page', 'Chrome protects this page from extensions. Switch to a regular website to use page controls.');
+      const origin = `${url.origin}/*`;
+      const granted = await chrome.permissions.contains({ origins: [origin] });
+      if (granted) throw new CommandFailure('page-changed', 'Chrome could not reach this page even though site access is allowed. Reload the page, then try a fresh command.');
+      throw new CommandFailure('site-access', `Allow access to ${url.hostname} to continue this page command. The blocked step has not run.`, true, origin, url.href);
     }
   }
   const refs = frames.map(item => ({ tabId, frameId: item.frameId, documentId: item.documentId, at: Date.now() }));

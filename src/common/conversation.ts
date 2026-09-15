@@ -6,9 +6,9 @@ export interface TabRef { id: number; windowId: number; title: string; url: stri
 export interface TargetContext { tabId: number; windowId: number; tabIds?: number[]; }
 export interface PageRef { tabId: number; frameId: number; documentId?: string; token?: string; at: number; }
 export interface Choice { id: string; label: string; detail?: string; tabs?: TabRef[]; value?: string; }
-export type ChoiceKind = 'tabs' | 'site' | 'group' | 'workspace' | 'macro' | 'name' | 'text' | 'page' | 'reading';
+export type ChoiceKind = 'tabs' | 'site' | 'group' | 'workspace' | 'macro' | 'name' | 'text' | 'page' | 'reading' | 'speech';
 export interface ChoiceOverrides { [key: string]: Choice; }
-export interface Question { routineInput?: { routine: Routine; values: Record<string, string>; name: string }; id: string; prompt: string; choices: Choice[]; kind: ChoiceKind; key: string; request: ActiveRequest; actions: ChromeAction[]; context: TargetContext; overrides: ChoiceOverrides; at: number; }
+export interface Question { speechChoice?: boolean; routineInput?: { routine: Routine; values: Record<string, string>; name: string }; id: string; prompt: string; choices: Choice[]; kind: ChoiceKind; key: string; request: ActiveRequest; actions: ChromeAction[]; context: TargetContext; overrides: ChoiceOverrides; at: number; }
 export interface UndoValues { muted?: boolean; pinned?: boolean; index?: number; windowId?: number; zoom?: number; }
 export interface UndoPatch { kind?: 'move' | 'pin' | 'mute' | 'zoom'; tabId: number; before: UndoValues; after: UndoValues; }
 export interface UndoRecord { id: string; label: string; kinds: ('move' | 'pin' | 'mute' | 'zoom')[]; patches: UndoPatch[]; at: number; }

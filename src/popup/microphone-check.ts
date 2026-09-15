@@ -1,3 +1,18 @@
+/** Request permission without leaving a stream open, including late permission answers. */
+export function allowMicrophone(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const finish = (error?: unknown): void => {
+      if (finished) return; finished = true; clearTimeout(timer); signal.removeEventListener('abort', cancel);
+      if (error) reject(error); else resolve();
+    };
+    const cancel = (): void => finish(new DOMException('Microphone setup stopped.', 'AbortError'));
+    const timer = setTimeout(() => finish(new Error('Microphone permission was not answered. Try again when ready.')), 20_000);
+    signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) { cancel(); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { finish(new Error('Microphone access is unavailable. Open this guide in Chrome.')); return; }
+    void navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { stream.getTracks().forEach(track => track.stop()); finish(); }).catch(finish);
+  });
+}
 /** Five seconds of local amplitude measurement. No audio recording, playback, or transcription. */
 export function checkMicrophone(signal: AbortSignal, onLevel: (level: number) => void): Promise<boolean> {
   return new Promise((resolve, reject) => {

@@ -1,6 +1,6 @@
 {
   "name": "handsfree-for-chrome",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "description": "Voice control for Chrome with local command interpretation.",
@@ -14,7 +14,13 @@
     "check": "npm run lint && npm run test && npm run build && node scripts/verify-build.mjs",
     "package": "node scripts/package.mjs",
     "models:download": "node scripts/download-model.mjs",
-    "eval:model": "node scripts/smoke-model.mjs"
+    "eval:model": "node scripts/smoke-model.mjs",
+    "build:local-ai": "tsc --noEmit && node scripts/build.mjs --local-ai",
+    "package:local-ai": "node scripts/package.mjs --local-ai",
+    "test:browser": "playwright test",
+    "test:browser:headed": "playwright test --headed",
+    "test:upgrade": "playwright test --config=playwright.upgrade.config.ts",
+    "check:local-ai": "npm run build:local-ai && node scripts/verify-build.mjs --local-ai"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
@@ -22,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
+    "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.0.313",
     "@types/node": "^22.13.10",
     "@webgpu/types": "^0.1.60",

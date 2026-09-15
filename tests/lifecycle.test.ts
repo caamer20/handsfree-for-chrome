@@ -4,7 +4,7 @@ import { closeOffscreen, ensureOffscreen } from '../src/background/offscreen-man
 class FakeRecognition {
   static latest: FakeRecognition;
   lang = ''; continuous = false; interimResults = false; maxAlternatives = 1;
-  onresult: ((event: { resultIndex: number; results: { isFinal: boolean; 0: { transcript: string } }[] }) => void) | null = null;
+  onresult: ((event: { resultIndex: number; results: { isFinal: boolean; length?: number; [index: number]: { transcript: string } }[] }) => void) | null = null;
   onerror: ((event: { error: string }) => void) | null = null;
   onend: (() => void) | null = null;
   start = vi.fn(); abort = vi.fn();
@@ -17,6 +17,7 @@ it('releases recognition listeners, timer, and microphone on a final transcript'
   const result = speech.listen('en-US', vi.fn());
   const instance = FakeRecognition.latest;
   instance.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'open a new tab' } }] });
+  await vi.advanceTimersByTimeAsync(600);
   await expect(result).resolves.toBe('open a new tab');
   expect(instance.abort).toHaveBeenCalledOnce();
   expect(instance.onresult).toBeNull(); expect(instance.onerror).toBeNull(); expect(instance.onend).toBeNull();
@@ -88,4 +89,51 @@ it('retries temporary speech network failures a bounded number of times', async 
     await vi.advanceTimersByTimeAsync(8000);
   }
   expect(error).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+});
+it('waits through a longer pause and preserves the complete correction before emitting', async () => {
+  const speech = new SpeechSession(); const final = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), vi.fn(), { pace: 'relaxed' });
+  const current = FakeRecognition.latest;
+  current.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'mute this tab' } }] });
+  await vi.advanceTimersByTimeAsync(1000); expect(final).not.toHaveBeenCalled();
+  current.onresult?.({ resultIndex: 1, results: [{ isFinal: true, 0: { transcript: 'mute this tab' } }, { isFinal: true, 0: { transcript: 'no actually pin this tab' } }] });
+  await vi.advanceTimersByTimeAsync(1600);
+  expect(final).toHaveBeenCalledExactlyOnceWith('mute this tab no actually pin this tab');
+  speech.cancel(); expect(vi.getTimerCount()).toBe(0);
+});
+it('never runs a finalized prefix while the end of the phrase is still interim', async () => {
+  const speech = new SpeechSession(); const final = vi.fn(); const error = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), error);
+  FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'close this tab' } }, { isFinal: false, 0: { transcript: 'no wait' } }] });
+  await vi.advanceTimersByTimeAsync(3500);
+  expect(final).not.toHaveBeenCalled(); expect(error).toHaveBeenCalledWith(expect.stringContaining('end of that phrase')); expect(vi.getTimerCount()).toBe(0);
+});
+it('forwards available alternate transcripts without choosing a different command', async () => {
+  const speech = new SpeechSession(); const final = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), vi.fn());
+  expect(FakeRecognition.latest.maxAlternatives).toBe(3);
+  FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, length: 2, 0: { transcript: 'mute this tab' }, 1: { transcript: 'pin this tab' } }] });
+  await vi.advanceTimersByTimeAsync(600);
+  expect(final).toHaveBeenCalledExactlyOnceWith('mute this tab', ['pin this tab']); speech.cancel();
+});
+it('drops buffered commands when the speech connection fails', async () => {
+  const speech = new SpeechSession(); const final = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), vi.fn());
+  FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'close this tab' } }] });
+  FakeRecognition.latest.onerror?.({ error: 'network' }); FakeRecognition.latest.onend?.();
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(final).not.toHaveBeenCalled(); speech.cancel(); expect(vi.getTimerCount()).toBe(0);
+});
+it('refuses an oversized utterance instead of executing its truncated beginning', async () => {
+  const speech = new SpeechSession(); const final = vi.fn(); const error = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), error);
+  FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'open a new tab '.repeat(50) } }] });
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(final).not.toHaveBeenCalled(); expect(error).toHaveBeenCalledWith(expect.stringContaining('too long')); expect(vi.getTimerCount()).toBe(0);
+});
+it('lets an explicit stop bypass the ordinary speaking pause', () => {
+  const speech = new SpeechSession(); const final = vi.fn();
+  speech.startContinuous('en-US', final, vi.fn(), vi.fn(), { pace: 'relaxed', immediate: text => text === 'stop' });
+  FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'stop' } }] });
+  expect(final).toHaveBeenCalledExactlyOnceWith('stop'); speech.cancel(); expect(vi.getTimerCount()).toBe(0);
 });

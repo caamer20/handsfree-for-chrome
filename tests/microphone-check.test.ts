@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { checkMicrophone } from '../src/popup/microphone-check';
+import { allowMicrophone, checkMicrophone } from '../src/popup/microphone-check';
 const stop = vi.fn(); const close = vi.fn(async () => undefined); const stream = { getTracks: () => [{ stop }] } as unknown as MediaStream;
 let capture: ReturnType<typeof vi.fn>; let sample = 140;
 beforeEach(() => {
@@ -24,4 +24,15 @@ it('cancels an unanswered permission request and stops any stream that arrives l
 it('times out ignored permission prompts and cleans up when permission is denied', async () => {
   capture.mockImplementationOnce(() => new Promise(() => undefined)); const timed = expect(checkMicrophone(new AbortController().signal, vi.fn())).rejects.toThrow('not answered'); await vi.advanceTimersByTimeAsync(20_001); await timed;
   capture.mockRejectedValueOnce(new DOMException('Denied', 'NotAllowedError')); await expect(checkMicrophone(new AbortController().signal, vi.fn())).rejects.toThrow('Denied'); expect(vi.getTimerCount()).toBe(0);
+});
+it('releases the permission-only stream immediately without creating an audio processor', async () => {
+  await allowMicrophone(new AbortController().signal);
+  expect(stop).toHaveBeenCalledOnce(); expect(close).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+});
+it('cleans up a permission-only stream that arrives after the page was closed', async () => {
+  let allow: (value: MediaStream) => void = () => undefined;
+  capture.mockImplementation(() => new Promise(resolve => { allow = resolve; }));
+  const controller = new AbortController(); const result = expect(allowMicrophone(controller.signal)).rejects.toThrow('stopped');
+  controller.abort(); await result; allow(stream); await Promise.resolve();
+  expect(stop).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
 });

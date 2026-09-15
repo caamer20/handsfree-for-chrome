@@ -34,7 +34,7 @@ export class MacrosPanel {
         const node = document.createElement('button'); node.type = 'button'; node.className = style; node.textContent = text; node.disabled = busy; node.addEventListener('click', handler); return node;
       };
       actions.append(
-        button('Run macro ↗', () => { void this.perform({ target: 'background', type: 'RUN_MACRO', id: macro.id }).then(ok => { if (ok) this.showControl(); }); }),
+        button('Open websites ↗', () => { void this.perform({ target: 'background', type: 'RUN_MACRO', id: macro.id }).then(ok => { if (ok) this.showControl(); }); }),
         button('Edit', () => this.edit(macro)),
         button('Delete', () => { this.deletingId = macro.id; this.render(this.macros, this.busy); }, 'text-button'),
       );
@@ -42,7 +42,7 @@ export class MacrosPanel {
       if (this.deletingId === macro.id) {
         const confirmation = document.createElement('div'); confirmation.className = 'macro-delete';
         const label = document.createElement('p'); label.textContent = `Delete “${macro.name}” and its saved sites?`;
-        confirmation.append(label, button('Delete macro', () => { void this.remove(macro); }, 'secondary danger-button'), button('Keep it', () => { this.deletingId = null; this.render(this.macros, this.busy); }));
+        confirmation.append(label, button('Delete routine', () => { void this.remove(macro); }, 'secondary danger-button'), button('Keep it', () => { this.deletingId = null; this.render(this.macros, this.busy); }));
         card.append(confirmation);
       }
       list.append(card);
@@ -52,8 +52,8 @@ export class MacrosPanel {
     this.editingId = macro?.id ?? null;
     el('macro-form').hidden = false;
     el('macro-empty').hidden = true;
-    el('macro-editor-title').textContent = macro ? 'Edit macro' : 'New macro';
-    el('save-macro').textContent = macro ? 'Save changes' : 'Save macro';
+    el('macro-editor-title').textContent = macro ? 'Edit website routine' : 'New website routine';
+    el('save-macro').textContent = macro ? 'Save changes' : 'Save routine';
     el<HTMLInputElement>('macro-name').value = macro?.name ?? '';
     el<HTMLInputElement>('macro-phrase').value = macro?.phrase ?? '';
     el<HTMLTextAreaElement>('macro-sites').value = macro?.urls.join('\n') ?? '';

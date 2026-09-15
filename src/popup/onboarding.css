@@ -2,3 +2,13 @@
 @media (max-width: 760px) { .welcome-main { grid-template-columns: 1fr; } .welcome-art { display: none; } .welcome-copy h2 { font-size: 43px; } .welcome-tag { display: none; } .welcome-footer { gap: 15px; } }
 
 .guided-setup { padding: 0 40px 24px; } .setup-card { border: 1px solid #dce3d2; border-radius: 14px; padding: 20px; margin: 14px 0; } .setup-card p { font-size: 13px; line-height: 1.6; color: #586c61; } #mic-level { width: 100%; height: 20px; margin: 8px 0; }
+.voice-steps { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 8px; }
+.voice-steps li { padding: 8px 12px; border: 1px solid #dce3d2; border-radius: 20px; font-size: 12px; color: #68796e; }
+.voice-steps li.complete { background: #e4f2e8; border-color: #9ebba5; color: #205e3c; }
+.voice-steps li.complete::before { content: '✓ '; }
+.spoken-setup[data-status="passed"] { border-color: #88ae95; background: #f1f8ef; }
+.spoken-setup[data-status="failed"] { border-color: #d5b59e; }
+.heard-text { font-weight: 600; overflow-wrap: anywhere; }
+.setup-card summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.setup-card label { display: block; margin-top: 14px; margin-bottom: 6px; font-size: 12px; }
+#welcome-pace { max-width: 350px; }

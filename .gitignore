@@ -1,6 +1,12 @@
 node_modules/
 dist/
+dist-local-ai/
 release/
+test-results/
+test-results-upgrade/
+test-results-model/
+playwright-report/
+.browser-test-data/
 .DS_Store
 coverage/
 models/smollm2-135m-quant/*

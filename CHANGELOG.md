@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.0 — Developer preview
+
+- Lightweight standard edition without model weights or the local inference runtime; a separate optional local-AI package.
+- Spoken setup that displays the transcript, identifies the failing stage, and verifies the requested new tab exists.
+- Natural and relaxed speaking pace, bounded speech alternatives, explicit self-corrections, and clarification before conflicting interpretations act.
+- Optional persistent side panel with transcript, current tab, progress, choices, and Stop.
+- Actionable website and missing-tab recovery, one-time resumption of eligible remaining steps, stale-page checks, and stronger outcome verification.
+- Voice settings first, optional AI in Advanced, website-opening macros presented as a routine type, and examples for the current site.
+- Installed-Chrome command, permission, speech-transport, lifecycle, native-surface, performance, and actual prior-release migration tests. Separate 12-case local-model quality report.
+
+Human voice accuracy, physical sleep/wake, microphone-device changes, and hardware battery measurements remain unmeasured. The local model failed all 12 exact-plan cases and remains experimental. See the [current validation record](docs/VALIDATION.md).
+
 ## 1.7.0 — Developer preview
 
 - Guided setup with a local microphone meter, a practice browser command, readiness checks, and targeted recovery instructions.

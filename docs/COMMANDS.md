@@ -1,5 +1,9 @@
 # Command guide
 
+Version 1.8 adds **Speaking pace → Take my time** for longer pauses, explicit spoken corrections between complete commands, and short choices when recognition alternatives have different supported meanings. Literal search/field text and dictation keep correction-like words as data. Unfinished speech, negation, and conflicting candidates do not silently become extra actions.
+
+Open **Keep open beside my tabs** for a persistent transcript, target, progress, and Stop. On a recoverable failure, use **Allow [site]**, **Choose another tab**, or **Edit what I heard**. Granting access does not execute anything; **Resume remaining steps** is a separate choice. Confirmed completed steps are not replayed. A changed page, expired recovery, or new command requires a fresh attempt. Native tab state and immediate field values are checked after supported actions; these checks do not certify a website's later server-side save.
+
 The extension’s **Commands** tab is the complete searchable guide. Select an example to copy it into Control without executing it. Edit names, numbers, or text before submitting it.
 
 ## Targets and follow-ups

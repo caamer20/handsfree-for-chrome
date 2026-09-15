@@ -17,6 +17,7 @@ export class LibraryPanel {
   private editingId: string | null = null;
   constructor(private perform: (message: Message) => Promise<boolean>, private showControl: () => void) {
     document.querySelectorAll<HTMLElement>('[data-library]').forEach(tab => tab.addEventListener('click', () => this.show(tab.dataset.library ?? 'sites')));
+    document.querySelectorAll<HTMLElement>('[data-routine-view]').forEach(tab => tab.addEventListener('click', () => this.show(tab.dataset.routineView ?? 'routines')));
     el('new-alias').addEventListener('click', () => this.edit());
     el('cancel-alias').addEventListener('click', () => { el('alias-form').hidden = true; this.editingId = null; });
     el('alias-form').addEventListener('submit', event => { event.preventDefault(); void this.save(); });
@@ -29,8 +30,11 @@ export class LibraryPanel {
     }
   }
   show(name: string): void {
+    const collection = name === 'macros' ? 'routines' : name;
+    el('routine-switcher').hidden = collection !== 'routines';
     document.querySelectorAll<HTMLElement>('.library-section').forEach(section => { section.hidden = section.id !== `library-${name}`; });
-    document.querySelectorAll<HTMLElement>('[data-library]').forEach(tab => { if (tab.dataset.library === name) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current'); });
+    document.querySelectorAll<HTMLElement>('[data-library]').forEach(tab => { if (tab.dataset.library === collection) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current'); });
+    document.querySelectorAll<HTMLElement>('[data-routine-view]').forEach(tab => { if (tab.dataset.routineView === name) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current'); });
     if (name === 'reading') void this.reading();
   }
   private async run(text: string): Promise<void> { if (await this.perform({ target: 'background', type: 'RUN_TEXT', text })) this.showControl(); }

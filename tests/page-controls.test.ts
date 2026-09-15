@@ -34,6 +34,17 @@ it('inserts at the selected text, fires input events, and respects a cancelled b
   input.addEventListener('beforeinput', event => event.preventDefault());
   expect(await controller.execute({ operation: 'type', text: 'blocked' })).toMatchObject({ ok: false }); expect(input.value).toBe('hello Chrome');
 });
+it('reports a synchronous controlled-editor rejection instead of claiming text was entered', async () => {
+  document.body.innerHTML = '<input aria-label="Search" value="original">'; const field = document.querySelector('input')!;
+  field.addEventListener('input', () => { field.value = 'original'; });
+  expect(await controller.execute({ operation: 'fill', query: 'Search', text: 'replacement' })).toMatchObject({ ok: false, text: expect.stringContaining('rejected') });
+  expect(field.value).toBe('original');
+});
+it('verifies that text survives the editor’s next update before reporting success', async () => {
+  document.body.innerHTML = '<input aria-label="Search" value="original">'; const field = document.querySelector('input')!;
+  field.addEventListener('input', () => { queueMicrotask(() => { field.value = 'original'; }); });
+  expect(await controller.execute({ operation: 'fill', query: 'Search', text: 'replacement' })).toMatchObject({ ok: false, text: expect.stringContaining('rejected') });
+});
 it('dictates command-like text literally and stops when focus changes', async () => {
   document.body.innerHTML = '<textarea></textarea><input aria-label="Other"><input type="password" aria-label="Password">';
   const field = document.querySelector('textarea')!; field.focus();

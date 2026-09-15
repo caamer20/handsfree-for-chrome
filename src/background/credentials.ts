@@ -6,7 +6,9 @@ async function credentials(): Promise<Record<string, string>> {
   return Object.fromEntries(Object.entries(data).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
 }
 export async function getApiKey(config: ProviderConfig): Promise<string | undefined> {
-  return config.aiProvider === 'local' ? undefined : (await credentials())[credentialId(config)];
+  if (config.aiProvider === 'local') return undefined;
+  let id: string; try { id = credentialId(config); } catch { return undefined; }
+  return (await credentials())[id];
 }
 export async function saveApiKey(config: ProviderConfig, key: string): Promise<void> {
   if (config.aiProvider === 'local') throw new Error('Choose an API provider before saving a key.');

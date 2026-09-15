@@ -5,6 +5,7 @@ import type { ChromeAction, Settings } from '../common/schema';
 import { literalTabMatch } from './tab-matching';
 import { fuzzyScore } from './fuzzy';
 import type { Macro } from '../common/macros';
+import { CommandFailure } from '../common/recovery';
 
 export interface ExecutionEnvironment { settings: Settings; library: Library; macros: Macro[]; state: Conversation; overrides: ChoiceOverrides; operationId: string; transcript: string; signal?: AbortSignal; reviewed?: boolean; onProgress?: (event: ProgressEvent) => Promise<void>; }
 export function sites(env: ExecutionEnvironment): Site[] { return [...BUILTIN_SITES, ...env.library.aliases.map(aliasAsSite)]; }
@@ -38,10 +39,14 @@ export function matchTabs(tabs: chrome.tabs.Tab[], query: string, env?: Executio
 function safeHost(url?: string): string { try { return new URL(url ?? '').hostname; } catch { return 'Chrome page'; } }
 export async function resolveTabs(query: string, context: TargetContext, env: ExecutionEnvironment, multiple = false): Promise<chrome.tabs.Tab[]> {
   const key = `tabs:${normalizeName(query)}`; const override = env.overrides[key];
-  if (override?.tabs?.length) return Promise.all(override.tabs.map(tab => chrome.tabs.get(tab.id)));
+  if (override?.tabs?.length) return Promise.all(override.tabs.map(async ref => {
+    const tab = await chrome.tabs.get(ref.id);
+    if (tab.windowId !== ref.windowId || (tab.url ?? tab.pendingUrl ?? '') !== ref.url) throw new CommandFailure('page-changed', 'The chosen tab changed after the question appeared. Ask again using its current title.');
+    return tab;
+  }));
   const tabs = await chrome.tabs.query({}); checkCancelled(env.signal);
   const matches = matchTabs(tabs, query, env);
-  if (!matches.length) throw new Error(`No tab matching “${query}” found. Try a title word, a site nickname, or “open ${query}”.`);
+  if (!matches.length) throw new CommandFailure('missing-target', `No tab matching “${query}” found. Choose an open tab or edit the command.`, true, undefined, undefined, key);
   if (matches.length > 1 && !multiple) {
     env.state.candidates = matches.map(tabRef); env.state.at = Date.now();
     throw new ChoiceRequired(`${matches.length} tabs match “${query}”. Which one?`, matches.slice(0, 50).map(tab => ({ id: String(tab.id), label: tab.title ?? 'Untitled tab', detail: `${tab.windowId === context.windowId ? 'This window' : 'Another window'} · ${safeHost(tab.url)}`, tabs: [tabRef(tab)] })), 'tabs', key);

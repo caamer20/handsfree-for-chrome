@@ -13,8 +13,14 @@ beforeEach(() => {
   tabs.query.mockImplementation(async (filter: chrome.tabs.QueryInfo) => open.filter(tab => (filter.windowId === undefined || tab.windowId === filter.windowId) && (filter.active === undefined || tab.active === filter.active)));
   tabs.get.mockImplementation(async (id: number) => { const tab = open.find(tab => tab.id === id); if (!tab) throw new Error('Tab disappeared'); return tab; });
   tabs.remove.mockImplementation(async (ids: number[]) => { open = open.filter(tab => !ids.includes(tab.id!)); });
-  tabs.update.mockImplementation(async (id: number, update: chrome.tabs.UpdateProperties) => ({ ...open.find(tab => tab.id === id), ...update }));
-  tabs.move.mockImplementation(async (id: number, move: chrome.tabs.MoveProperties) => ({ ...open.find(tab => tab.id === id), index: move.index }));
+  tabs.update.mockImplementation(async (id: number, update: chrome.tabs.UpdateProperties) => {
+    const tab = open.find(tab => tab.id === id)!;
+    if (update.active) for (const other of open.filter(other => other.windowId === tab.windowId)) other.active = false;
+    Object.assign(tab, update);
+    if (update.muted !== undefined) tab.mutedInfo = { muted: update.muted };
+    return { ...tab };
+  });
+  tabs.move.mockImplementation(async (id: number, move: chrome.tabs.MoveProperties) => { const tab = open.find(tab => tab.id === id)!; tab.index = move.index; return { ...tab }; });
   vi.stubGlobal('chrome', { tabs, windows, sessions });
 });
 it('executes “close xyz tab” against a named background tab without first activating it', async () => {
@@ -67,7 +73,7 @@ it('wraps next/previous switching at either end of the window', async () => {
 it('moves a named tab while respecting the pinned-tab boundary', async () => {
   await dispatchActions(parseCommand('move YouTube tab to the beginning'), initial);
   expect(tabs.move).toHaveBeenCalledWith(2, { index: 0 });
-  tabs.move.mockClear(); open[0]!.pinned = true;
+  tabs.move.mockClear(); open[0]!.pinned = true; open[1]!.index = 1;
   await dispatchActions(parseCommand('move YouTube tab left'), initial);
   expect(tabs.move).not.toHaveBeenCalled();
   await expect(dispatchActions(parseCommand('move YouTube tab to position 1'), initial)).rejects.toThrow('Pinned tabs');
@@ -80,7 +86,7 @@ it('moves the targeted tab into a new window and adopts the returned context', a
 });
 it('reopens one recently closed tab, skipping closed windows', async () => {
   sessions.getRecentlyClosed.mockResolvedValue([{ window: { sessionId: 'closed-window' } }, { tab: { sessionId: 'closed-tab' } }]);
-  sessions.restore.mockResolvedValue({ tab: make(9, 2, 10, 'Restored tab') });
+  sessions.restore.mockImplementation(async () => { const tab = make(9, 2, 10, 'Restored tab'); open.push(tab); return { tab }; });
   const result = await dispatchActions(parseCommand('reopen last closed tab'), initial);
   expect(sessions.restore).toHaveBeenCalledExactlyOnceWith('closed-tab');
   expect(result.context).toEqual({ tabId: 9, windowId: 10 });

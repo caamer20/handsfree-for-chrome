@@ -5,6 +5,7 @@ import { ChoiceRequired, ReviewRequired, checkCancelled, tabRef } from '../commo
 import { executeFeature } from './features';
 import { contextFor, contextTabs, markIrreversible, recordUndo, rememberTargets, resolveTabs, undoSnapshot, type ExecutionEnvironment } from './execution';
 import { macroSchema, type Macro } from '../common/macros';
+import { CommandFailure } from '../common/recovery';
 
 export interface DispatchContext { tabId: number; windowId: number; tabIds?: number[]; }
 export interface DispatchResult { text: string; context: DispatchContext; }
@@ -32,6 +33,12 @@ export function requiresReview(actions: ChromeAction[], source: 'grammar' | 'mod
 }
 function flattenBookmarks(nodes: chrome.bookmarks.BookmarkTreeNode[]): chrome.bookmarks.BookmarkTreeNode[] {
   return nodes.flatMap(n => [n, ...flattenBookmarks(n.children ?? [])]);
+}
+async function verifyTab(tabId: number, expected: { active?: boolean; pinned?: boolean; muted?: boolean; index?: number }, signal?: AbortSignal): Promise<void> {
+  checkCancelled(signal);
+  const actual = await chrome.tabs.get(tabId).catch(() => undefined);
+  checkCancelled(signal);
+  if (!actual || (expected.active !== undefined && actual.active !== expected.active) || (expected.pinned !== undefined && actual.pinned !== expected.pinned) || (expected.muted !== undefined && !!actual.mutedInfo?.muted !== expected.muted) || (expected.index !== undefined && actual.index !== expected.index)) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the requested tab change. Check the tab before trying again; the action may have partly completed.');
 }
 export async function dispatchActions(input: unknown, initial: DispatchContext, env?: ExecutionEnvironment): Promise<DispatchResult> {
   const actions = actionsSchema.parse(input);
@@ -80,6 +87,12 @@ export async function dispatchActions(input: unknown, initial: DispatchContext, 
     } catch (error) {
       if (error instanceof ChoiceRequired) { error.remaining = actions.slice(index); error.context = context; throw error; }
       if (error instanceof ReviewRequired) { error.remaining = actions.slice(index + 1); error.context = context; throw error; }
+      if (error instanceof CommandFailure) {
+        error.context = context;
+        if (error.beforeEffects && ['find_tab', 'page_action', 'wait_for_field'].includes(action.action)) error.remaining = actions.slice(index);
+        if (messages.length) error.message = `${messages.join(' · ')}. Stopped: ${error.message}`.slice(0, 500);
+        throw error;
+      }
       const why = error instanceof Error ? error.message : 'Chrome could not complete this action';
       throw new Error(messages.length ? `${messages.join(' · ')}. Stopped: ${why}` : why);
     }
@@ -92,6 +105,7 @@ async function dispatchOne(item: ChromeAction, context: DispatchContext, env?: E
   const adopt = (tab: chrome.tabs.Tab): DispatchContext => ({ tabId: tab.id ?? context.tabId, windowId: tab.windowId });
   if (item.action === 'create_tab') {
     const tab = await chrome.tabs.create({ url: item.params.url, active: item.params.active ?? true, windowId: context.windowId });
+    if (tab.id === undefined) throw new CommandFailure('unknown-outcome', 'Chrome did not identify the new tab. Check open tabs before trying again.');
     return done('Opened a new tab', adopt(tab));
   }
   if (item.action === 'find_tab') {
@@ -100,6 +114,7 @@ async function dispatchOne(item: ChromeAction, context: DispatchContext, env?: E
     if (item.params.auto_switch !== false) {
       await chrome.windows.update(match.windowId, { focused: true });
       await chrome.tabs.update(match.id, { active: true });
+      await verifyTab(match.id, { active: true }, env?.signal);
     }
     return done(`Found ${match.title ?? 'matching tab'}`, adopt(match));
   }
@@ -115,6 +130,7 @@ async function dispatchOne(item: ChromeAction, context: DispatchContext, env?: E
     if (item.params.activate !== false) {
       await chrome.windows.update(tab.windowId, { focused: true });
       await chrome.tabs.update(tab.id, { active: true });
+      await verifyTab(tab.id, { active: true }, env?.signal);
     }
     return done(`Selected tab ${index + 1}${tab.title ? ` · ${tab.title}` : ''}`, adopt(tab));
   }
@@ -184,6 +200,7 @@ async function dispatchOne(item: ChromeAction, context: DispatchContext, env?: E
       if (index === tab.index) return done(`Tab is already in position ${index + 1}`);
       const result = await chrome.tabs.move(context.tabId, { index });
       const moved = Array.isArray(result) ? result[0] : result;
+      await verifyTab(context.tabId, { index }, env?.signal);
       return done(`Moved tab to position ${index + 1}`, moved ? adopt(moved) : context);
     }
     case 'duplicate_tab': {
@@ -194,17 +211,19 @@ async function dispatchOne(item: ChromeAction, context: DispatchContext, env?: E
     case 'reload_tab': await chrome.tabs.reload(context.tabId, { bypassCache: item.params.bypass_cache ?? false }); return done('Reloaded tab');
     case 'mute_tab': {
       const muted = item.params.toggle ? !tab.mutedInfo?.muted : item.params.mute ?? true;
-      await chrome.tabs.update(context.tabId, { muted }); return done(muted ? 'Muted tab' : 'Unmuted tab');
+      await chrome.tabs.update(context.tabId, { muted }); await verifyTab(context.tabId, { muted }, env?.signal); return done(muted ? 'Muted tab' : 'Unmuted tab');
     }
     case 'pin_tab': {
       const pinned = item.params.toggle ? !tab.pinned : item.params.pin ?? true;
-      await chrome.tabs.update(context.tabId, { pinned }); return done(pinned ? 'Pinned tab' : 'Unpinned tab');
+      await chrome.tabs.update(context.tabId, { pinned }); await verifyTab(context.tabId, { pinned }, env?.signal); return done(pinned ? 'Pinned tab' : 'Unpinned tab');
     }
     case 'zoom': {
       const steps = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
       const current = await chrome.tabs.getZoom(context.tabId);
       const factor = item.params.mode === 'reset' ? 1 : item.params.mode === 'set' ? item.params.factor ?? 1 : item.params.mode === 'in' ? steps.find(x => x > current + 0.01) ?? 5 : [...steps].reverse().find(x => x < current - 0.01) ?? 0.25;
-      await chrome.tabs.setZoom(context.tabId, factor); return done(`Zoom ${Math.round(factor * 100)}%`);
+      await chrome.tabs.setZoom(context.tabId, factor); checkCancelled(env?.signal);
+      if (Math.abs(await chrome.tabs.getZoom(context.tabId) - factor) > 0.001) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the zoom level. Check the page before trying again.');
+      return done(`Zoom ${Math.round(factor * 100)}%`);
     }
     case 'bookmark_page': {
       if (!tab.url || !isSafeUrl(tab.url) || tab.url === 'chrome://newtab/') throw new Error('Open a web page to bookmark it');

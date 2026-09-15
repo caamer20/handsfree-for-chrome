@@ -139,10 +139,12 @@ export class PageController {
     const inputType = deleting ? 'deleteContentBackward' : replace ? 'insertReplacementText' : 'insertText';
     const inputEvent = new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, data: text, inputType });
     if (!element.dispatchEvent(inputEvent)) return { ok: false, text: 'This editor handled the input itself. Use its editing controls.' };
+    let expected: string;
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const input = element as HTMLInputElement | HTMLTextAreaElement;
       const start = replace ? 0 : input.selectionStart ?? input.value.length; const end = replace ? input.value.length : input.selectionEnd ?? start;
       const next = input.value.slice(0, start) + text + input.value.slice(end);
+      expected = next;
       if (input.type === 'number' && next && !/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?$/i.test(next)) return { ok: false, text: 'Use a numeric value for this number field.' };
       if (input.maxLength >= 0 && next.length > input.maxLength) return { ok: false, text: 'That text exceeds the field’s character limit.' };
       const prototype = Object.getPrototypeOf(input) as object;
@@ -155,9 +157,19 @@ export class PageController {
       else { range = this.doc.createRange(); range.selectNodeContents(element); if (!replace) range.collapse(false); }
       range.deleteContents(); const node = this.doc.createTextNode(text); range.insertNode(node); range.setStartAfter(node); range.collapse(true);
       selection?.removeAllRanges(); selection?.addRange(range);
+      expected = element.textContent ?? '';
     }
     element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType }));
+    if (!element.isConnected || this.fieldValue(element) !== expected) return { ok: false, text: 'The page changed or rejected the entered text. Check the field before trying again.' };
     return { ok: true, text: 'Text entered' };
+  }
+  private fieldValue(element: HTMLElement): string { return /^(INPUT|TEXTAREA)$/.test(element.tagName) ? (element as HTMLInputElement).value : element.textContent ?? ''; }
+  private async insertVerified(element: HTMLElement, text: string, replace = false, deleting = false): Promise<PageResult> {
+    const result = this.insert(element, text, replace, deleting); if (!result.ok) return result;
+    const expected = this.fieldValue(element);
+    // Give controlled editors one turn to apply or reject their input update.
+    await new Promise<void>(resolve => this.win.setTimeout(resolve, 0));
+    return element.isConnected && this.fieldValue(element) === expected ? result : { ok: false, text: 'The editor changed or rejected the entered text. Check the field before trying again.' };
   }
   dictate(text: string, token?: string): PageResult {
     const element = this.dictationTarget;
@@ -294,10 +306,10 @@ export class PageController {
           if (op === 'select_all') { const range = this.doc.createRange(); range.selectNodeContents(selected); selection?.removeAllRanges(); selection?.addRange(range); }
           else if (!selection?.rangeCount || selection.isCollapsed || !selected.contains(selection.getRangeAt(0).commonAncestorContainer)) return { ok: false, text: 'Select some text in the field first.' };
         }
-        return op === 'select_all' ? { ok: true, text: 'Selected all text in this field' } : this.insert(selected, '', false, true);
+        return op === 'select_all' ? { ok: true, text: 'Selected all text in this field' } : this.insertVerified(selected, '', false, true);
       }
-      if (op === 'fill' || op === 'clear') return this.insert(selected, op === 'clear' ? '' : command.text ?? '', true, op === 'clear');
-      if (op === 'type') return this.insert(selected, command.text ?? '');
+      if (op === 'fill' || op === 'clear') return this.insertVerified(selected, op === 'clear' ? '' : command.text ?? '', true, op === 'clear');
+      if (op === 'type') return this.insertVerified(selected, command.text ?? '');
       this.dictationTarget = selected; this.dictationToken = crypto.randomUUID();
       return { ok: true, text: 'Dictation on. Say “stop dictation” when finished.', dictating: true, token: this.dictationToken };
     }

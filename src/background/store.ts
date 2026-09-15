@@ -1,16 +1,18 @@
+import type { RecoveryPlan } from '../common/recovery';
+import type { VoiceSetup } from '../common/setup';
+import { migrateSettings } from '../common/settings';
 import type { ExecutionProgress } from '../common/progress';
-import { defaultSettings, settingsSchema, type HudState, type Settings } from '../common/schema';
+import { type HudState, type Settings } from '../common/schema';
 import type { ActiveRequest, CaptureSession, LogEntry, PendingPlan } from '../common/types';
 import { MAX_LOG_ENTRIES } from '../common/constants';
 import { emptyConversation, type Conversation, type Question } from '../common/conversation';
 import { macrosSchema, upsertMacro, type Macro } from '../common/macros';
 
-export interface SessionState { progress: ExecutionProgress | null; active: ActiveRequest | null; capture: CaptureSession | null; pending: PendingPlan | null; question: Question | null; conversation: Conversation; permissionTabId: number | null; hud: HudState; hudTabId: number | null; lastActivity: number; }
-export const defaultSession: SessionState = { progress: null, active: null, capture: null, pending: null, question: null, conversation: emptyConversation(), permissionTabId: null, hud: { phase: 'idle', text: 'Ready when you are' }, hudTabId: null, lastActivity: 0 };
+export interface SessionState { recovery: RecoveryPlan | null; voiceSetup: VoiceSetup | null; transcript: string | null; progress: ExecutionProgress | null; active: ActiveRequest | null; capture: CaptureSession | null; pending: PendingPlan | null; question: Question | null; conversation: Conversation; permissionTabId: number | null; hud: HudState; hudTabId: number | null; lastActivity: number; }
+export const defaultSession: SessionState = { recovery: null, voiceSetup: null, transcript: null, progress: null, active: null, capture: null, pending: null, question: null, conversation: emptyConversation(), permissionTabId: null, hud: { phase: 'idle', text: 'Ready when you are' }, hudTabId: null, lastActivity: 0 };
 export async function getSettings(): Promise<Settings> {
   const { settings } = await chrome.storage.local.get('settings');
-  const parsed = settingsSchema.safeParse(settings ?? {});
-  return parsed.success ? parsed.data : defaultSettings;
+  return migrateSettings(settings);
 }
 export async function getMacros(): Promise<Macro[]> {
   const { macros } = await chrome.storage.local.get('macros');
