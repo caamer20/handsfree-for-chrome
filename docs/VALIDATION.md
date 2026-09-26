@@ -13,7 +13,7 @@ Executed September 26, 2026 UTC on macOS x64 with Node 24.2.0 and Chrome for Tes
 | Optional edition installed smoke | Both installation/typed-command and persisted-preference checks passed with AI off. |
 | Production dependency audit | Zero reported vulnerabilities. |
 | Published 1.7 and 1.8 upgrade journeys | Both passed using verified published ZIPs, including library/preferences after reload and browser restart. |
-| Fresh-host Linux/macOS/Windows suite | All 64 browser cases passed on each platform in initial runs. A duplicate Linux run missed one opening side-panel click; its fixture now waits for stable, visible, hit-testable coordinates. The upgrade download tag is corrected. Final complete CI rerun pending. |
+| Fresh-host Linux/macOS/Windows suite | All 64 browser cases passed on each platform in initial runs. A duplicate Linux run missed one opening side-panel click; its fixture now waits for stable, visible, hit-testable coordinates. The upgrade download tag is corrected. A later duplicate run exposed committed-URL timing and a slow Windows module startup; bounded readiness checks now preserve the same exact outcomes. Final complete CI rerun pending. |
 | Optional local-model quality | Recorded native-q8 benchmark remains 0/12 exact plans. No expectations or model validation were weakened. |
 
 This record will be updated as release verification completes. A passing typed command or synthetic SpeechRecognition event is not measured human voice accuracy.
@@ -36,7 +36,7 @@ No system audio process was restarted, and no fake readiness signal was substitu
 
 The standard archive is 199,311 bytes (579,207 bytes unpacked), with no model weights/runtime. The optional local-AI archive is 222,259,608 bytes (377,173,308 bytes unpacked). Both ZIPs passed integrity, version, and package-content checks. [Archive sizes and SHA-256 values](validation/v1.9/packages.json) identify the local installable artifacts; ZIP timestamps mean separately built CI archives may have different hashes.
 
-The [typed-command performance observation](validation/v1.9/performance.json) recorded a 117 ms cold command, 178 ms warm median, 183 ms warm p95 over 20 cycles, and 207,036 bytes of retained offscreen JavaScript heap growth after garbage collection. These observations came from one disposable development session, exclude audio/network recognition, and are not performance guarantees or comparisons with older releases. Heap is not total RSS; engine task duration is not battery use.
+The [typed-command performance observation](validation/v1.9/performance.json) recorded a 118 ms cold command, 175 ms warm median, 184 ms warm p95 over 20 cycles, and 202,236 bytes of retained offscreen JavaScript heap growth after garbage collection. These observations came from one disposable development session, exclude audio/network recognition, and are not performance guarantees or comparisons with older releases. Heap is not total RSS; engine task duration is not battery use.
 
 ## Reproduce
 

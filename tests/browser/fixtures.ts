@@ -22,7 +22,11 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string; 
   control: async ({ context, extensionId }, use) => {
     // onInstalled opens this page only after storage/session initialization.
     // Wait before creating controls so a late welcome tab cannot steal focus.
-    await expect.poll(() => context.pages().some(page => page.url().endsWith('/onboarding.html'))).toBe(true);
+    // Worker discovery can precede loading its modules on a slow CI runner.
+    await expect.poll(() => context.pages().map(page => page.url()), {
+      timeout: 30_000,
+      message: 'The installed extension must open its welcome page before test controls are created. Observed page URLs:',
+    }).toContain(`chrome-extension://${extensionId}/src/popup/onboarding.html`);
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
     await expect(page.locator('#listen')).toContainText('Set up microphone');

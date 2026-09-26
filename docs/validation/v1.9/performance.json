@@ -1,21 +1,21 @@
 {
-  "measuredAt": "2026-09-26T07:05:24.579Z",
+  "measuredAt": "2026-09-26T07:30:07.709Z",
   "platform": "darwin x64",
   "browser": "153.0.8010.12",
   "edition": "standard",
   "input": "typed open a new tab; real Chrome APIs",
-  "coldCommandMs": 117,
+  "coldCommandMs": 118,
   "warmCommandMs": {
     "samples": 20,
-    "median": 178,
-    "p95": 183,
-    "max": 185
+    "median": 175,
+    "p95": 184,
+    "max": 187
   },
   "engineHeapBytes": {
-    "before": 4405060,
-    "after": 4612096,
-    "retainedGrowth": 207036
+    "before": 4405132,
+    "after": 4607368,
+    "retainedGrowth": 202236
   },
-  "engineTaskDurationSeconds": 0.535237,
+  "engineTaskDurationSeconds": 0.54817,
   "limitations": "Synthetic task loop in headless Chrome. Heap is offscreen JavaScript only, not total RSS. Task duration is an engine activity proxy, not battery consumption. No audio/network transcription latency or hardware battery measurement."
 }

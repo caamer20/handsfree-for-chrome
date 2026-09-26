@@ -4,11 +4,14 @@ test('installs the production package and executes a typed command through the r
   const errors: string[] = [];
   control.on('pageerror', error => errors.push(error.message));
   expect((await state(control)).settings.aiEnabled).toBe(false);
+  const before = new Set((await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id));
   await control.locator('#command').fill('open a new tab');
   await control.getByRole('button', { name: 'Run typed command' }).click();
   await expect.poll(async () => (await state(control)).hud.phase).toBe('success');
-  const tabs = await worker.evaluate(() => chrome.tabs.query({}));
-  expect(tabs.some(tab => tab.url === 'chrome://newtab/')).toBe(true);
+  // tabs.create resolves before Chrome necessarily commits the new tab's URL.
+  // Wait for that navigation while still requiring exactly one new tab.
+  await expect.poll(async () => (await worker.evaluate(() => chrome.tabs.query({})))
+    .filter(tab => !before.has(tab.id)).map(tab => tab.url)).toEqual(['chrome://newtab/']);
   expect(context.pages().length).toBeGreaterThan(1);
   expect(errors).toEqual([]);
 });

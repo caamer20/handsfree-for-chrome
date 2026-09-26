@@ -13,8 +13,10 @@ test('completes spoken setup through real extension messaging with synthetic ASR
   await emitSpeech(engine, 'open a new tab');
   await expect(welcome.locator('#spoken-setup')).toHaveAttribute('data-status', 'passed');
   expect((await state(control)).settings.setupVoicePassed).toBe(true);
-  const after = await worker.evaluate(() => chrome.tabs.query({}));
-  expect(after.length).toBe(before.length + 1); expect(after.find(tab => !before.some(old => old.id === tab.id))?.url).toBe('chrome://newtab/');
+  await expect.poll(async () => {
+    const after = await worker.evaluate(() => chrome.tabs.query({}));
+    return { count: after.length, createdUrls: after.filter(tab => !before.some(old => old.id === tab.id)).map(tab => tab.url) };
+  }).toEqual({ count: before.length + 1, createdUrls: ['chrome://newtab/'] });
   expect(await engine.evaluate('globalThis.__handsfreeTestSpeech.current.stopped')).toBe(true);
   await welcome.screenshot({ path: 'test-results/spoken-setup.png', fullPage: true }); await engine.detach();
 });
