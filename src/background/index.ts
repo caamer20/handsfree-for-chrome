@@ -377,7 +377,11 @@ async function interrupt(replacement?: string, stopListening = false, sessionId?
     const actions = correctionPlan(intent?.replacement ?? text); return actions ? JSON.stringify(actions) : undefined;
   }).length > 0;
   const repeat = 'I heard different corrections. The command was cancelled. Repeat the full correction.';
-  await stop(conflict ? repeat : stopListening ? 'Microphone off. Ready when you are.' : 'Command cancelled.');
+  const stopping = stop(conflict ? repeat : stopListening ? 'Microphone off. Ready when you are.' : 'Command cancelled.');
+  // stop() invalidates the previous generation synchronously; another Stop
+  // arriving during its cleanup must also invalidate this automatic restart.
+  const restartGeneration = engineCancellation;
+  await stopping;
   let reply: Reply = { ok: true, handled: true };
   if (replacement && !conflict) {
     const request = await newRequest(); await begin(request);
@@ -397,11 +401,11 @@ async function interrupt(replacement?: string, stopListening = false, sessionId?
     if (actions) reply = await executePlan(actions, 'grammar', request, replacement, context, previous.question?.overrides);
     else await finish({ phase: 'error', text: 'Try the correction as a complete command, such as “pin it instead”.' }, request);
   }
-  if (previous.capture && !previous.capture.decisionId && !stopListening) {
+  if (previous.capture && !previous.capture.decisionId && !stopListening && restartGeneration === engineCancellation) {
     const id = crypto.randomUUID(); await setSession({ capture: { id, startedAt: Date.now(), lastSeen: Date.now() } });
-    await chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: 0.5 }); await ensureOffscreen();
-    await send({ target: 'offscreen', type: 'START_LISTENING', requestId: id, settings });
-    const current = await getSession(); if (!current.pending && !current.question) await hud({ phase: 'listening', text: conflict ? repeat : replacement ? current.hud.text : 'Command cancelled. Listening…' });
+    await chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: 0.5 });
+    await startEngine({ target: 'offscreen', type: 'START_LISTENING', requestId: id, settings }, true, restartGeneration);
+    const current = await getSession(); if (restartGeneration === engineCancellation && current.capture?.id === id && !current.pending && !current.question) await hud({ phase: 'listening', text: conflict ? repeat : replacement ? current.hud.text : 'Command cancelled. Listening…' });
   }
   return reply;
 }

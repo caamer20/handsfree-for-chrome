@@ -190,8 +190,11 @@ function joinEdges(start: HTMLElement, end: HTMLElement, host: HTMLElement): voi
   while (empty && empty !== host && !empty.childNodes.length) { const parent: HTMLElement | null = empty.parentElement; empty.remove(); empty = parent; }
 }
 
-export function replaceEditableRange(host: HTMLElement, range: Range, text: string): void {
+export function replaceEditableRange(host: HTMLElement, range: Range, text: string): boolean {
   const start = lineContainer(range.startContainer, host); const end = lineContainer(range.endContainer, host);
+  // Joining a nested paragraph to its parent can reorder untouched siblings or
+  // append an ancestor into itself. Refuse before deleting any selected text.
+  if (start !== end && (start.contains(end) || end.contains(start))) return false;
   const anchor = range.cloneRange(); anchor.collapse(true);
   range.deleteContents(); joinEdges(start, end, host);
   range.setStart(anchor.startContainer, anchor.startOffset); range.collapse(true);
@@ -204,4 +207,5 @@ export function replaceEditableRange(host: HTMLElement, range: Range, text: stri
     const filler = host.ownerDocument.createElement('br'); last.after(filler);
   }
   const selection = host.ownerDocument.defaultView?.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+  return true;
 }

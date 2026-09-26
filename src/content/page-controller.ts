@@ -233,7 +233,7 @@ export class PageController {
       const start = replace ? 0 : selectionBefore?.start ?? before.length; const end = replace ? before.length : selectionBefore?.end ?? before.length;
       if (!editingRange || !editableRangeAllowed(element, editingRange)) return { ok: false, text: 'That selection includes hidden or noneditable content. Your text was kept.' };
       expected = before.slice(0, start) + text.replace(/\r\n?/g, '\n') + before.slice(end);
-      replaceEditableRange(element, editingRange, text);
+      if (!replaceEditableRange(element, editingRange, text)) return { ok: false, text: 'That selection crosses nested paragraphs this editor cannot safely join. Edit within one paragraph or use the page’s editing controls. Your text was kept.' };
     }
     this.editing = true;
     try { element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType })); }

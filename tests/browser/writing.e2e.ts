@@ -7,6 +7,29 @@ async function run(control: Page, text: string, phase = 'success'): Promise<void
   await expect.poll(async () => { const current = await state(control); return [current.transcript, current.hud.phase]; }).toEqual([text, phase]);
 }
 
+test('keeps nested paragraph text and nodes intact when a partial replacement cannot be joined safely', async ({ context, control, extensionId }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Nested writing</title><div contenteditable="true" aria-label="Draft">a<p>b</p>c</div>' }));
+  const page = await context.newPage(); await page.goto('https://handsfree.test/nested-writing');
+  await activateExtension(page, extensionId); await page.bringToFront();
+  await run(control, 'focus the Draft field');
+  const field = page.locator('[contenteditable]'); const original = await field.locator('p').elementHandle();
+  await original!.evaluate(node => node.addEventListener('click', () => { document.body.dataset.originalListener = 'fired'; }));
+  for (const reverse of [false, true]) {
+    await field.evaluate((element, reverse) => {
+      const range = document.createRange(); const paragraph = element.querySelector('p')!;
+      range.setStart(reverse ? paragraph.firstChild! : element.firstChild!, 0);
+      range.setEnd(reverse ? element.lastChild! : paragraph.firstChild!, 0);
+      const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    }, reverse);
+    await run(control, 'type replacement', 'error');
+    expect(await field.innerHTML()).toBe('a<p>b</p>c');
+    expect(await original!.evaluate(node => node === document.querySelector('[contenteditable] p'))).toBe(true);
+    expect((await state(control)).hud.text).toContain('nested paragraphs');
+  }
+  await field.locator('p').click(); expect(await page.locator('body').getAttribute('data-original-listener')).toBe('fired');
+  await run(control, 'fill Draft with whole field'); await expect(field).toHaveText('whole field');
+});
+
 test('selects and replaces literal phrases and moves the caret in installed Chrome', async ({ context, control, extensionId }) => {
   await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Writing</title><label>Notes<textarea>We study black holes today.</textarea></label><div contenteditable="true" role="textbox" aria-label="Draft">Hello <strong>bright</strong> world</div>' }));
   const page = await context.newPage(); await page.goto('https://handsfree.test/writing');

@@ -155,7 +155,7 @@ Common commands and routine templates are processed locally. With cloud AI enabl
 
 - Desktop Chrome **120+**; English speech settings for US, UK, Australia, and Canada.
 - The standard edition contains no model weights or AI runtime and is about **0.6 MiB unpacked**. The optional local-AI edition includes both model variants and is approximately **212 MiB zipped**. Both editions support optional cloud AI.
-- Standard text inputs, textareas, multiline plain contenteditable, native checkboxes/radios, and native single-select dropdowns are supported. “New line” and “new paragraph” produce visible breaks during dictation. Custom editors, protected pages, and inaccessible frames may require manual interaction.
+- Standard text inputs, textareas, multiline plain contenteditable, native checkboxes/radios, and native single-select dropdowns are supported. “New line” and “new paragraph” produce visible breaks during dictation. Partial replacements across nested parent/child paragraph boundaries are refused to preserve untouched text. Custom editors, protected pages, and inaccessible frames may require manual interaction.
 - Password, hidden, disabled, and readonly text fields are excluded. Form entry does not implicitly submit.
 - Page and field waits stop after 15 seconds. A document-load event does not guarantee that a site has finished all background requests.
 - Undo covers supported tab moves, pinning, muting, and zoom. During dictation, “scratch that” can restore the last unchanged insertion. Neither is a general undo for form edits, sorting, or an entire routine.

@@ -1104,3 +1104,29 @@ it.each(startupModes)('revalidates %s request ownership after engine creation', 
   expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => ['START_LISTENING', 'PARSE_TEXT'].includes((value as unknown as Message).type))).toHaveLength(0);
   expect(create).not.toHaveBeenCalled();
 });
+
+it('automatically resumes continuous listening after an ordinary command cancellation', async () => {
+  await request(startupMessage('continuous')); const previous = savedSession().capture!.id;
+  vi.mocked(chrome.runtime.sendMessage).mockClear();
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: false });
+  expect(savedSession().capture?.id).not.toBe(previous); expect(savedSession().hud.phase).toBe('listening');
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => (value as unknown as Message).type === 'START_LISTENING')).toHaveLength(1);
+});
+
+it.each(['ensure', 'acknowledgement'] as const)('stops an automatic continuous restart during its deferred %s without late audio or HUD', async phase => {
+  await request(startupMessage('continuous')); let entered = false; let release: () => void = () => undefined;
+  vi.mocked(chrome.runtime.sendMessage).mockClear();
+  if (phase === 'ensure') vi.mocked(ensureOffscreen).mockImplementationOnce(() => { entered = true; return new Promise<void>(resolve => { release = resolve; }); });
+  else vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: Message) => {
+    if (message.type === 'START_LISTENING') { entered = true; return new Promise<Reply>(resolve => { release = () => resolve({ ok: false, error: 'Late restart failure' }); }); }
+    return Promise.resolve({ ok: true });
+  }) as typeof chrome.runtime.sendMessage);
+  const restarting = request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: false });
+  await settleDecisionOperations(); expect(entered).toBe(true); const captureId = savedSession().capture!.id;
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  expect(savedSession().capture).toBeNull(); expect(savedSession().active).toBeNull(); expect(close).toHaveBeenCalled();
+  const stopped = structuredClone(savedSession().hud); release(); await restarting; await settleDecisionOperations();
+  await request({ target: 'background', type: 'ENGINE_LISTENING', requestId: captureId }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(stopped); expect(savedSession().capture).toBeNull(); expect(create).not.toHaveBeenCalled();
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => (value as unknown as Message).type === 'START_LISTENING')).toHaveLength(phase === 'ensure' ? 0 : 1);
+});

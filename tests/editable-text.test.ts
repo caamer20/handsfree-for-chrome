@@ -65,7 +65,7 @@ it.each([
   }
 });
 
-it.each(['first<br>second', '<p>first</p><p>second</p>', '<div><p>first</p></div><div><p>second</p></div>', 'first<div><p>second</p></div>', '<div><p>first</p></div>second'])('replaces a multiline phrase and preserves unrelated nodes: %s', async markup => {
+it.each(['first<br>second', '<p>first</p><p>second</p>', '<div><p>first</p></div><div><p>second</p></div>'])('replaces a multiline phrase and preserves unrelated nodes: %s', async markup => {
   const field = editor(`${markup}<p id="untouched"><em>Keep me</em></p>`); const untouched = field.querySelector('#untouched');
   expect((await controller.execute({ operation: 'replace_text', query: 'firstsecond', text: 'wrong' })).ok).toBe(false);
   expect((await controller.execute({ operation: 'replace_text', query: 'rst\nsec', text: 'X\nY' })).ok).toBe(true);
@@ -108,7 +108,7 @@ it('places the caret around a unique Unicode phrase without mutating text or cro
   expect((await controller.execute({ operation: 'cursor_before', query: 'protected' })).ok).toBe(false); expect(field.innerHTML).toBe(markup);
 });
 
-it.each(['a<br>b', '<p>a</p><p>b</p>', '<div>a</div><div><br></div><div>b</div>', '<p><br></p><p>b</p>', '<p>a</p><p><br></p>', '<p>a</p><p><strong></strong>b</p>', 'a<div><p>b</p></div>', '\n  <p>a</p>\n  <p>b</p>\n'])('edits every logical range without losing line boundaries: %s', async markup => {
+it.each(['a<br>b', '<p>a</p><p>b</p>', '<div>a</div><div><br></div><div>b</div>', '<p><br></p><p>b</p>', '<p>a</p><p><br></p>', '<p>a</p><p><strong></strong>b</p>', '\n  <p>a</p>\n  <p>b</p>\n'])('edits every logical range without losing line boundaries: %s', async markup => {
   const value = fieldText(editor(markup));
   for (let start = 0; start <= value.length; start++) for (let end = start; end <= value.length; end++) {
     const field = editor(markup); expect(selectTextRange(field, { start, end })).toBe(true);
@@ -226,4 +226,47 @@ it('bounds wide, deep, and hidden oversized editor trees before mutating them', 
   current.append('keep'); expect(() => editableText(host)).toThrow('too large'); expect(current.textContent).toBe('keep');
   host.innerHTML = `<span hidden>${'x'.repeat(1_000_001)}</span>`;
   expect(() => editableText(host)).toThrow('too large'); expect(host.firstChild!.textContent).toHaveLength(1_000_001);
+});
+
+it.each([
+  ['<div>a<p>b</p>c</div>', 0, 2],
+  ['<div>a<p>b</p>c</div>', 2, 4],
+  ['<div><p>a</p>b<p>c</p></div>', 0, 2],
+  ['<div><p>a</p>b<p>c</p></div>', 2, 4],
+  ['<div>a<div>b</div>c</div>', 0, 2],
+  ['<div>a<div>b</div>c</div>', 2, 4],
+  ['<div><span>a</span><p>b</p><span>c</span></div>', 0, 2],
+  ['<div><span>a</span><p>b</p><span>c</span></div>', 2, 4],
+  ['a<p>b</p>c', 0, 2],
+  ['a<p>b</p>c', 2, 4],
+  ['<p>a</p>b<p>c</p>', 0, 2],
+  ['<p>a</p>b<p>c</p>', 2, 4],
+  ['a<div><p>b</p></div>', 0, 2],
+  ['<div><p>a</p></div>b', 0, 2],
+] as const)('refuses nested parent/child paragraph joins before changing text: %s [%i,%i]', async (markup, start, end) => {
+  const field = editor(markup); const nodes = Array.from(field.querySelectorAll('*')); const value = fieldText(field);
+  selectTextRange(field, { start, end }); const selection = textSelection(field); const input = vi.fn(); field.addEventListener('input', input);
+  expect(await controller.execute({ operation: 'type', text: 'X\nY' })).toMatchObject({ ok: false, text: expect.stringContaining('nested paragraphs') });
+  expect(field.innerHTML).toBe(markup); expect(fieldText(field)).toBe(value); expect(textSelection(field)).toEqual(selection);
+  expect(Array.from(field.querySelectorAll('*'))).toEqual(nodes); expect(input).not.toHaveBeenCalled();
+});
+
+it.each([['<div>a<p>b</p>c</div>', 0], ['<div>a<p>b</p>c</div>', 2], ['a<p>b</p>c', 0], ['a<p>b</p>c', 2]] as const)('keeps nested text intact when a refused dictation join starts in %s at %i', async (markup, start) => {
+  const field = editor(markup); selectTextRange(field, { start, end: start + 2 });
+  const started = await controller.execute({ operation: 'dictate_start' });
+  expect(await controller.dictate('replacement', started.token)).toMatchObject({ ok: false, dictating: false });
+  expect(field.innerHTML).toBe(markup);
+  expect((await controller.dictate('scratch that', started.token)).ok).toBe(false); expect(field.innerHTML).toBe(markup);
+});
+
+it.each(['<div>a<p>b</p>c</div>', 'a<p>b</p>c'])('preserves caret edits and whole-field replacement inside nested paragraphs: %s', async markup => {
+  const value = 'a\nb\nc';
+  for (let offset = 0; offset <= value.length; offset++) {
+    const field = editor(markup); selectTextRange(field, { start: offset, end: offset });
+    expect((await controller.execute({ operation: 'type', text: 'X' })).ok).toBe(true);
+    expect(fieldText(field)).toBe(value.slice(0, offset) + 'X' + value.slice(offset));
+  }
+  const field = editor(markup);
+  expect((await controller.execute({ operation: 'fill', text: 'Replacement' })).ok).toBe(true); expect(fieldText(field)).toBe('Replacement');
+  expect((await controller.execute({ operation: 'clear' })).ok).toBe(true); expect(fieldText(field)).toBe('');
 });
