@@ -56,7 +56,7 @@ it.each([
   ['Go back two tabs', 'select_tab', { position: 'previous', offset: 2, activate: true }],
   ['Move this tab three places to the left', 'move_tab', { position: 'left', steps: 3 }],
   ['Open link twenty one', 'page_action', { operation: 'activate', index: 21 }],
-  ['Save this session as Research', 'workspace_action', { operation: 'save', name: 'Research' }],
+  ['Save this session as Research', 'workspace_action', { operation: 'save', name: 'Research', scope: 'window' }],
   ['Load my Research workspace', 'workspace_action', { operation: 'restore', name: 'Research' }],
   ['Put Gmail and GitHub in a group called Work', 'group_action', { operation: 'create', name: 'Work' }],
   ['Add this page to my favorites', 'bookmark_page', {}],

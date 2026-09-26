@@ -6,6 +6,14 @@ export const MAX_COMMAND_MS = 2 * 60_000;
 export const MAX_LOG_ENTRIES = 30;
 export interface CommandExample { group: string; text: string; hint: string; variations?: readonly string[]; }
 export const COMMAND_EXAMPLES: readonly CommandExample[] = [
+  { group: 'Page structure', text: 'Show headings', hint: 'Choose a heading from the page outline without activating its links', variations: ['Next heading', 'Previous heading'] },
+  { group: 'Page structure', text: 'Go to the Pricing heading', hint: 'Scroll and focus a named heading; matching headings ask for a choice' },
+  { group: 'Page structure', text: 'Show page regions', hint: 'Choose a landmark such as main content or navigation', variations: ['Show landmarks', 'Next landmark', 'Previous landmark'] },
+  { group: 'Page structure', text: 'Go to main content', hint: 'Focus the main region of the current accessible page frame' },
+  { group: 'Form editing', text: 'Select text black holes', hint: 'Select one matching phrase inside the focused field; repeated phrases need more detail', variations: ['Highlight text black holes'] },
+  { group: 'Form editing', text: 'Replace text black holes with neutron stars', hint: 'Replace one matching phrase inside the focused field; the replacement stays literal' },
+  { group: 'Form editing', text: 'Move the cursor to the start', hint: 'Put the caret at the beginning of the focused field', variations: ['Move the cursor to the end', 'Put the caret at the end of this field'] },
+  { group: 'Form editing', text: 'Move the cursor after text black holes', hint: 'Place the caret around one matching phrase in the focused field', variations: ['Move the cursor before text black holes'] },
   { group: 'Routines', text: 'Wait for the search field', hint: 'Wait up to 15 seconds for one matching editable field; then continue' },
   {"group": "Routines", "text": "Search Wikipedia", "hint": "Ask for search words, then continue · useful as a routine step"},
   {"group": "Routines", "text": "Wait for the page to load", "hint": "Wait up to 15 seconds before the next command; stop if loading takes longer"},
@@ -86,6 +94,10 @@ export const COMMAND_EXAMPLES: readonly CommandExample[] = [
   { group: 'Groups & workspaces', text: 'Move Research group to a new window', hint: 'Move a whole group into a fresh window' },
   { group: 'Groups & workspaces', text: 'Save this workspace as Work', hint: 'Save web tabs, pin states, and named groups locally' },
   { group: 'Groups & workspaces', text: 'Restore my work tabs', hint: 'Reopen a saved workspace in a new window' },
+  { group: 'Groups & workspaces', text: 'Update Research workspace', hint: 'Review the current tabs before replacing a saved version' },
+  { group: 'Groups & workspaces', text: 'Recover Research workspace', hint: 'Review and recover the previous save; keep open tabs unchanged' },
+  { group: 'Groups & workspaces', text: 'Rename Research workspace to Reading', hint: 'Change the name while preserving both saved versions' },
+  { group: 'Groups & workspaces', text: 'Discard previous version of Research workspace', hint: 'Review before removing only the previous saved version' },
   { group: 'Reading & cleanup', text: 'Save this for later', hint: 'Add this page to Chrome’s reading list' },
   { group: 'Reading & cleanup', text: 'Open my unread articles', hint: 'Review the unread URLs before opening a batch' },
   { group: 'Reading & cleanup', text: 'Show duplicate tabs', hint: 'Review exact copies while keeping active and pinned tabs' },

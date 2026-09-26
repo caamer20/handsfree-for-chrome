@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.10.0 — Developer preview
+
+- Follow-up listening preserves the pending question or review in single-command mode. Stop interrupts pending voice-engine startup and readback requests. Read or repeat complete choices aloud, move between pages, and answer with stable option numbers.
+- Multiline plain contenteditable fields now preserve visible line breaks and paragraph boundaries. Hidden or noneditable content, oversized insertions, and unsafe partial joins between nested paragraphs are refused before mutation. Dictation undo restores original nodes, formatting, event listeners, and selection; page changes during an edit are rejected.
+- Place the cursor before or after a unique phrase in the focused field.
+- Stabilize native popup sizing so buttons stay under the pointer, with larger paged-readback controls.
+- Review workspace updates and recover the previous saved version. Rename workspaces by voice, and review before discarding only their previous version. Updates validate both the proposed tabs and saved data again before writing; unchanged updates retain useful history.
+- Library backup version 2 includes workspace history, with continued support for version 1 imports and older saved workspaces. Library changes are serialized to protect concurrent saves and imports.
+- Saved website routines run by their selected identity, preserve the first opened tab as context, and retain all opened tabs for plural follow-up commands.
+- Download an inspectable diagnostic report from Settings or the welcome guide. Reports include status and counts and exclude URLs, command text, library contents, and credentials.
+
+## 1.9.0 — Developer preview
+
+- Portable library export and reviewed import for site nicknames, both routine types, and workspaces. Existing entries remain intact; identical items are skipped.
+- Workspace restoration preserves the active tab and distinct named or unnamed groups, including their colors and collapsed state. Older saves remain supported.
+- Voice editing inside the focused field: select a phrase, replace a phrase, and move the cursor to the start or end. Repeated matches require a more specific phrase.
+- Page-outline navigation through headings and landmarks; horizontal panel scrolling; find phrases across inline formatting.
+- Caret-aware dictation, verified editor updates, and a guarded one-step “scratch that” correction. “Literal …” inserts reserved dictation phrases as text.
+- Optional spoken punctuation in dictation, off by default and separate from literal command text.
+- Conflicting speech alternatives cannot silently approve a review or choose a different target. Speech buffered before a review or dictation-mode change is discarded.
+- Stable ordering for moves of several tabs and chronological undo. Reviewed commands continue on the remaining tab or first opened article.
+- Spoken recovery controls and confirmed per-target progress for workspace restore, sorting, and muting; Stop remains effective across reviewed-action continuations.
+- Disabled fieldset controls and labels inside open shadow roots are handled correctly. Routine previews and keyboard focus survive unrelated background updates.
+
 ## 1.8.0 — Developer preview
 
 - Lightweight standard edition without model weights or the local inference runtime; a separate optional local-AI package.
@@ -10,7 +34,7 @@
 - Voice settings first, optional AI in Advanced, website-opening macros presented as a routine type, and examples for the current site.
 - Installed-Chrome command, permission, speech-transport, lifecycle, native-surface, performance, and actual prior-release migration tests. Separate 12-case local-model quality report.
 
-Human voice accuracy, physical sleep/wake, microphone-device changes, and hardware battery measurements remain unmeasured. The local model failed all 12 exact-plan cases and remains experimental. See the [current validation record](docs/VALIDATION.md).
+Human voice accuracy, physical sleep/wake, microphone-device changes, and hardware battery measurements remain unmeasured. The 1.10 local-model benchmark failed all 12 exact-plan cases, as did the earlier 1.8 benchmark; the model remains experimental. See the [current validation record](docs/VALIDATION.md).
 
 ## 1.7.0 — Developer preview
 

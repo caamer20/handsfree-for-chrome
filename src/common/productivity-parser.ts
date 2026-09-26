@@ -2,9 +2,23 @@ import type { ChromeAction } from './schema';
 import type { PageParams } from './expanded-schema';
 import { BUILTIN_SITES, normalizeName } from './library';
 import { targetClause } from './expanded-parser';
+import { navigationCommand } from './navigation-parser';
 
 const page = (params: PageParams): ChromeAction[] => [{ action: 'page_action', params }];
 const unquote = (value: string): string => value.replace(/^["“]([\s\S]*)["”]$/, '$1');
+export const isEditingLiteral = (raw: string): boolean => /^(?:(?:select|highlight) text|replace text|(?:move|put|place)(?: the)? (?:cursor|caret) (?:before|after)(?: text)?)(?:\s|$)/i.test(raw);
+/** These explicit text commands operate inside the focused field. Tails stay data. */
+export function editingLiteral(raw: string): ChromeAction[] | null {
+  const cursor = raw.match(/^(?:move|put|place)(?: the)? (?:cursor|caret) (before|after)(?: text)? ([\s\S]+)$/i);
+  if (cursor?.[1] && cursor[2]) return page({ operation: cursor[1].toLowerCase() === 'before' ? 'cursor_before' : 'cursor_after', query: unquote(cursor[2]) });
+  const replacement = /^replace text ["“]/i.test(raw)
+    ? raw.match(/^replace text ["“](.+?)["”] with ([\s\S]+)$/i)
+    : raw.match(/^replace text (.+?) with ([\s\S]+)$/i);
+  if (replacement?.[1] && replacement[2]) return page({ operation: 'replace_text', query: unquote(replacement[1]), text: unquote(replacement[2]) });
+  const selection = raw.match(/^(?:select|highlight) text ([\s\S]+)$/i);
+  if (selection?.[1]) return page({ operation: 'select_text', query: unquote(selection[1]) });
+  return null;
+}
 /** Literal replacements are read before sequence splitting, just like typed text. */
 export function formLiteral(raw: string): ChromeAction[] | null {
   const m = raw.match(/^(?:fill|replace)(?: the)? ["“](.+?)["”](?: field| box)? with (.+)$/i) ?? raw.match(/^(?:fill|replace)(?: the)? (.+?)(?: field| box)? with (.+)$/i);
@@ -18,6 +32,9 @@ export function incompleteSearch(raw: string): ChromeAction[] | null {
   return null;
 }
 export function productivityCommand(raw: string): ChromeAction[] | null {
+  const navigation = navigationCommand(raw); if (navigation) return page(navigation);
+  const cursor = raw.match(/^(?:move|put|place)(?: the)? (?:cursor|caret) (?:to|at)(?: the)? (start|beginning|end)(?: of (?:this |the |current |focused )?(?:field|text|box))?$/i);
+  if (cursor?.[1]) return page({ operation: cursor[1].toLowerCase() === 'end' ? 'cursor_end' : 'cursor_start' });
   const field = raw.match(/^wait for (?:the )?(.+?) (?:field|box)(?: to (?:appear|be ready))?$/i);
   if (field?.[1]) return [{ action: 'wait_for_field', params: { query: unquote(field[1]) } }];
   let m = raw.match(/^(?:open|show)(?: my| the| chrome)? (downloads|history|bookmarks|settings|extensions)(?: page| manager)?$/i);

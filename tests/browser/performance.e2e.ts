@@ -6,12 +6,23 @@ import { platform, arch } from 'node:os';
 test('records cold/warm command latency and retained engine heap over 20 cycles', async ({ context, control, worker }) => {
   const latency: number[] = [];
   const run = async () => {
+    const before = new Set((await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id));
     const started = performance.now();
     await message(control, { target: 'background', type: 'RUN_TEXT', text: 'open a new tab' });
     await expect.poll(async () => (await state(control)).hud.phase).toBe('success');
     latency.push(Math.round(performance.now() - started));
-    const tab = await worker.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]);
-    if (tab?.id && tab.url === 'chrome://newtab/') await worker.evaluate(id => chrome.tabs.remove(id), tab.id);
+    // Keep readiness/cleanup outside command latency. Creation can be confirmed
+    // while the requested URL is still pending, so remove the identified new ID.
+    let createdId: number | undefined;
+    await expect.poll(async () => {
+      const current = await worker.evaluate(() => chrome.tabs.query({}));
+      const created = current.filter(tab => !before.has(tab.id));
+      createdId = created.length === 1 ? created[0]!.id : undefined;
+      return { count: current.length, destinations: created.map(tab => tab.url || tab.pendingUrl) };
+    }).toEqual({ count: before.size + 1, destinations: ['chrome://newtab/'] });
+    expect(createdId).toBeDefined();
+    await worker.evaluate(id => chrome.tabs.remove(id), createdId!);
+    await expect.poll(async () => (await worker.evaluate(() => chrome.tabs.query({}))).filter(tab => !before.has(tab.id)).map(tab => tab.id)).toEqual([]);
   };
   await run();
   const engine = await ExtensionTarget.attach(control, '/offscreen.html');

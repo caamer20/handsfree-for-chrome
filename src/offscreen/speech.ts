@@ -86,7 +86,10 @@ export class SpeechSession {
         utterance.update(event); clearTimeout(finalTimer);
         if (utterance.overflow) { finish(undefined, 'That phrase was too long. Try one shorter command.'); return; }
         const partial = `${utterance.text} ${utterance.interim}`.trim(); if (partial) onInterim(partial.slice(0, 500));
-        if (utterance.text && !utterance.interim) finalTimer = setTimeout(() => finish(utterance.text), pause);
+        if (utterance.text && !utterance.interim) {
+          if (options.immediate?.(utterance.text)) finish(utterance.text);
+          else finalTimer = setTimeout(() => finish(utterance.text), pause);
+        }
       };
       recognition.onerror = event => finish(undefined, speechErrors[event.error] ?? `Speech recognition: ${event.error}`);
       recognition.onend = () => finish(utterance.interim ? undefined : utterance.text || undefined);

@@ -1,9 +1,10 @@
 import { makeProgress, stopProgress, type ExecutionProgress, type ProgressEvent } from '../common/progress';
 import type { ChromeAction } from '../common/schema';
 import { getSession, setSession } from './store';
-export async function prepareProgress(id: string, name: string, actions: ChromeAction[]): Promise<(event: ProgressEvent) => Promise<void>> {
+import type { WorkspaceNames } from '../common/workspace-presentation';
+export async function prepareProgress(id: string, name: string, actions: ChromeAction[], workspaces: WorkspaceNames = []): Promise<(event: ProgressEvent) => Promise<void>> {
   let progress = (await getSession()).progress;
-  if (!progress || progress.id !== id) progress = makeProgress(id, name, actions);
+  if (!progress || progress.id !== id) progress = makeProgress(id, name, actions, workspaces);
   else progress = structuredClone(progress);
   const offset = Math.max(0, progress.steps.length - actions.length);
   for (const step of progress.steps.slice(offset)) if (step.status !== 'completed') { step.status = 'pending'; step.result = undefined; }
@@ -17,7 +18,7 @@ export async function prepareProgress(id: string, name: string, actions: ChromeA
       const tab = await chrome.tabs.get(event.context.tabId).catch(() => undefined);
       step.target = `${tab?.title || 'Tab ' + event.context.tabId}${event.context.tabIds && event.context.tabIds.length > 1 ? ` · ${event.context.tabIds.length} tabs` : ''}`.slice(0, 200);
     } else if (event.status === 'target') {
-      if (event.result && step.completedTargets.length < 50) step.completedTargets.push(event.result.slice(0, 250));
+      if (event.result) step.completedTargets.push(event.result.slice(0, 250));
     } else { step.status = 'completed'; step.result = event.result?.slice(0, 500); }
     if (next.steps.every(item => item.status === 'completed')) next.status = 'completed';
     await setSession({ progress: next });

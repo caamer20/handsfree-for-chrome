@@ -11,7 +11,7 @@ export interface ChoiceOverrides { [key: string]: Choice; }
 export interface Question { speechChoice?: boolean; routineInput?: { routine: Routine; values: Record<string, string>; name: string }; id: string; prompt: string; choices: Choice[]; kind: ChoiceKind; key: string; request: ActiveRequest; actions: ChromeAction[]; context: TargetContext; overrides: ChoiceOverrides; at: number; }
 export interface UndoValues { muted?: boolean; pinned?: boolean; index?: number; windowId?: number; zoom?: number; }
 export interface UndoPatch { kind?: 'move' | 'pin' | 'mute' | 'zoom'; tabId: number; before: UndoValues; after: UndoValues; }
-export interface UndoRecord { id: string; label: string; kinds: ('move' | 'pin' | 'mute' | 'zoom')[]; patches: UndoPatch[]; at: number; }
+export interface UndoRecord { id: string; label: string; kinds: ('move' | 'pin' | 'mute' | 'zoom')[]; patches: UndoPatch[]; at: number; positionConflict?: boolean; }
 export interface Conversation {
   targets: TabRef[]; previousTargets: TabRef[]; candidates: TabRef[]; at: number;
   undo: UndoRecord[]; lastUndoId: string | null;

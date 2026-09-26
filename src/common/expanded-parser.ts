@@ -51,6 +51,13 @@ export function expandedSearch(raw: string): ChromeAction[] | null {
   if (m?.[1]) return [{ action: 'search_site', params: { site: 'search', query: m[1] } }];
   return null;
 }
+/** Workspace rename tails are literal names, even when they contain command words. */
+export function workspaceRename(raw: string): ChromeAction[] | null {
+  const match = raw.match(/^rename\s+(?:(?:my|the)\s+)?(.+?)\s+workspace(?:\s+to\s+([\s\S]+))?$/i);
+  if (!match?.[1]) return null;
+  const unquote = (text: string): string => text.trim().replace(/^["“]([\s\S]*)["”]$/, '$1');
+  return [{ action: 'workspace_action', params: { operation: 'rename', name: unquote(match[1]), ...(match[2] ? { new_name: unquote(match[2]) } : {}) } }];
+}
 export function expandedCommand(raw: string): ChromeAction[] | null {
   const c = raw.toLowerCase(); let m: RegExpMatchArray | null;
   if (/^(?:help|what can i say(?: here)?|what can i do here|show (?:me )?(?:the )?commands)$/.test(c)) return [{ action: 'help', params: {} }];
@@ -104,7 +111,13 @@ export function expandedCommand(raw: string): ChromeAction[] | null {
   m = c.match(/^mark (?:this|it)(?: (?:page|article))? (?:as )?(read|unread)$/);
   if (m?.[1]) return [{ action: 'reading_action', params: { operation: m[1] === 'read' ? 'mark_read' : 'mark_unread' } }];
   m = raw.match(/^save\s+(this workspace|these tabs|this window)(?:\s+(?:as|called)\s+(.+))?$/i);
-  if (m) return [...(m[1]?.toLowerCase() === 'these tabs' ? [{ action: 'reference_tabs', params: { reference: 'these' } } as ChromeAction] : []), { action: 'workspace_action', params: { operation: 'save', ...(m[2] ? { name: m[2] } : {}) } }];
+  if (m) return [...(m[1]?.toLowerCase() === 'these tabs' ? [{ action: 'reference_tabs', params: { reference: 'these' } } as ChromeAction] : []), { action: 'workspace_action', params: { operation: 'save', ...(m[2] ? { name: m[2] } : {}), ...(m[1]?.toLowerCase() === 'these tabs' ? { scope: 'selection' } : m[1]?.toLowerCase() === 'this window' ? { scope: 'window' } : {}) } }];
+  m = raw.match(/^update\s+(?:my\s+)?(.+?)\s+workspace(?:\s+(?:with|from)\s+(this window|these tabs))?$/i);
+  if (m?.[1]) return [...(m[2]?.toLowerCase() === 'these tabs' ? [{ action: 'reference_tabs', params: { reference: 'these' } } as ChromeAction] : []), { action: 'workspace_action', params: { operation: 'update', name: m[1], ...(m[2] ? { scope: m[2].toLowerCase() === 'these tabs' ? 'selection' : 'window' } : {}) } }];
+  m = raw.match(/^recover\s+(?:my\s+)?(.+?)\s+workspace$/i) ?? raw.match(/^restore\s+(?:the\s+)?previous (?:saved )?version of\s+(?:my\s+)?(.+?)\s+workspace$/i);
+  if (m?.[1]) return [{ action: 'workspace_action', params: { operation: 'recover', name: m[1] } }];
+  m = raw.match(/^discard\s+(?:the\s+)?previous (?:saved )?version of\s+(?:my\s+)?(.+?)\s+workspace$/i);
+  if (m?.[1]) return [{ action: 'workspace_action', params: { operation: 'discard_previous', name: m[1] } }];
   m = raw.match(/^(?:open|restore|bring back)\s+(?:my\s+)?(.+?)\s+workspace$/i) ?? raw.match(/^restore\s+(?:my\s+)?(.+?)\s+tabs$/i) ?? raw.match(/^(?:open|bring back)\s+(?:my\s+)?(.+?)\s+work tabs$/i);
   if (m?.[1]) return [{ action: 'workspace_action', params: { operation: 'restore', name: m[1] } }];
   if (/^(?:show|list) (?:my )?workspaces$/.test(c)) return [{ action: 'workspace_action', params: { operation: 'list' } }];

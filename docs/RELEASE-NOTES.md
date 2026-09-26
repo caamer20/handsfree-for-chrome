@@ -1,20 +1,22 @@
-HandsFree for Chrome 1.8 adds spoken setup, a persistent side panel, more forgiving speech, and recovery that preserves completed work.
+HandsFree for Chrome 1.9 adds voice text correction, page-outline navigation, portable libraries, and more faithful workspace restoration.
 
-- The guided spoken practice shows what was heard and verifies that “open a new tab” created a real tab.
-- Natural and relaxed speaking pace, explicit corrections, and short choices for conflicting transcription alternatives.
-- Persistent controls with transcript, target, progress, clarification, and Stop.
-- Allow a blocked site, choose a missing tab, or edit the command. Eligible resumption runs only unfinished steps after an explicit choice.
-- Voice settings first, AI under Advanced, and website-opening macros grouped with routines.
-- A lightweight standard package without model weights/runtime; a separate optional local-AI package.
+- Select or replace a phrase in the focused field, move its cursor, and say “scratch that” during dictation to restore the last unchanged insertion.
+- Optional spoken punctuation; “literal …” keeps reserved words as text. Dictation verifies editor updates and stops when they are rejected.
+- Navigate headings and page regions by name, number, or next/previous. Find phrases across inline formatting and scroll horizontal panels.
+- Export/import site nicknames, both routine types, and workspaces through a reviewed merge that preserves existing data.
+- Restore the active workspace tab and distinct named or unnamed groups, including color and collapsed state.
+- Conflicting speech cannot silently confirm a review, select another target, or execute a replacement correction. Recover unfinished commands by voice.
+- Stable batch tab moves, chronological undo that respects manual changes, and confirmed per-target progress through partial failures.
+- Current website access is checked before reusing a page controller or sending another dictated chunk. Deep and large page scans are bounded.
 
 ### Install or update
 
-Extract `handsfree-for-chrome.zip`, enable Developer mode at `chrome://extensions`, and load the folder containing `manifest.json`. For an update, replace the contents of the existing unpacked folder at the same path and reload. Keep Developer mode enabled. Version 1.8 adds the side-panel permission. See [installation instructions](https://github.com/caamer20/handsfree-for-chrome/blob/main/INSTALL.md).
+Extract `handsfree-for-chrome.zip`, enable Developer mode at `chrome://extensions`, and load the folder containing `manifest.json`. To update, replace the contents of the existing unpacked folder at the same path and select Reload. Check the 1.9 badge. Version 1.9 adds no new extension permissions. See [installation instructions](https://github.com/caamer20/handsfree-for-chrome/blob/main/INSTALL.md).
 
-`handsfree-for-chrome-local-ai.zip` is the optional model edition. `SHA256SUMS` lists both archives. The standard package is about 0.5 MiB unpacked, while the local-AI ZIP remains about 212 MiB.
+`handsfree-for-chrome-local-ai.zip` is the optional model edition. `SHA256SUMS` lists both archives. The standard edition remains under 1 MiB unpacked; the optional local-AI package includes the model weights and runtime.
 
 ### Validation and limits
 
-The application tests, installed-browser command/lifecycle tests, strict TypeScript, lint, build checks, and package checks are described in the [validation record](https://github.com/caamer20/handsfree-for-chrome/blob/main/docs/VALIDATION.md). Automated speech tests use synthetic ASR output and fake microphone devices; they do not measure live voice accuracy. OS permission prompts, physical microphone changes, sleep/wake, real battery use, and complex third-party sites need human testing.
+See the [validation record](https://github.com/caamer20/handsfree-for-chrome/blob/main/docs/VALIDATION.md) for executed application, installed-browser, upgrade, packaging, and platform checks. Synthetic speech tests do not establish real microphone or accent accuracy. Native OS permission prompts, physical microphone changes, sleep/wake, hardware battery use, and complex third-party editors still need human testing.
 
-AI is off by default. The optional local model failed all 12 exact-plan benchmark cases and remains experimental. Chrome speech recognition may send audio to Google even with local interpretation. Cloud AI uses your own provider key and billing. This is a developer preview, not a Chrome Web Store release.
+AI remains off by default. The optional local model still fails the recorded 12-case native-q8 exact-plan benchmark and remains experimental. No model-quality expectations were weakened for this release. Chrome speech recognition may send audio to Google; cloud AI uses your own provider key and billing. This is a developer preview, not a Chrome Web Store release.

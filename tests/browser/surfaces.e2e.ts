@@ -50,7 +50,7 @@ test('opens the native extension popup at Chrome’s actual popup dimensions', a
   await testInfo.attach('native-popup-layout', { body: JSON.stringify(sizes), contentType: 'application/json' });
   await popup.screenshot('test-results/native-popup.png'); await popup.detach();
   for (const size of sizes) {
-    expect(size.width).toBeLessThanOrEqual(800); expect(size.height).toBeLessThanOrEqual(600); expect(size.scrollWidth).toBeLessThanOrEqual(size.width);
+    expect(size.width).toBeLessThanOrEqual(410); expect(size.height).toBeLessThanOrEqual(600); expect(size.scrollWidth).toBeLessThanOrEqual(size.width);
     expect(size.inputBottom).toBeLessThanOrEqual(size.height);
   }
 });

@@ -1,0 +1,326 @@
+{
+  "version": "1.9.0",
+  "browser": "Chrome for Testing 153.0.8010.12",
+  "platform": "macOS x64",
+  "browserSuite": {
+    "startTime": "2026-09-26T07:03:19.050Z",
+    "duration": 168893.014,
+    "expected": 62,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "excludedCases": [
+    "completes spoken setup through real extension messaging with synthetic ASR output",
+    "shows speech interpretation failure without performing a different action"
+  ],
+  "exclusionReason": "Native getUserMedia audio remains pending in this development Mac\u2019s CoreAudio; reproduced outside the extension. Cases remain enabled in CI.",
+  "unitTests": {
+    "passed": 845,
+    "files": 30
+  },
+  "productionDependencyAudit": "0 vulnerabilities",
+  "cases": [
+    {
+      "title": "common task: Open a new tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Pin this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Unpin this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Mute this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Unmute this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Zoom in",
+      "passed": true
+    },
+    {
+      "title": "common task: Zoom to 125 percent",
+      "passed": true
+    },
+    {
+      "title": "common task: Reset zoom",
+      "passed": true
+    },
+    {
+      "title": "common task: Switch to the Research tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Next tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Previous tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Last tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Go to tab two",
+      "passed": true
+    },
+    {
+      "title": "common task: Move this tab to the end",
+      "passed": true
+    },
+    {
+      "title": "common task: Move this tab right",
+      "passed": true
+    },
+    {
+      "title": "common task: Duplicate this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Close this tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Close tab two",
+      "passed": true
+    },
+    {
+      "title": "common task: Close all other tabs",
+      "passed": true
+    },
+    {
+      "title": "common task: Reopen the last closed tab",
+      "passed": true
+    },
+    {
+      "title": "common task: Bookmark this page",
+      "passed": true
+    },
+    {
+      "title": "common task: Group these tabs as Research",
+      "passed": true
+    },
+    {
+      "title": "common task: Save this workspace as Research",
+      "passed": true
+    },
+    {
+      "title": "common task: Save this for later",
+      "passed": true
+    },
+    {
+      "title": "common task: Fill the search box with black holes",
+      "passed": true
+    },
+    {
+      "title": "common task: Clear the search field",
+      "passed": true
+    },
+    {
+      "title": "common task: Check the Remember me checkbox",
+      "passed": true
+    },
+    {
+      "title": "common task: Choose Canada from the Country dropdown",
+      "passed": true
+    },
+    {
+      "title": "common task: Show links",
+      "passed": true
+    },
+    {
+      "title": "common task: Scroll down a little",
+      "passed": true
+    },
+    {
+      "title": "requires an unambiguous spoken review answer before opening a routine tab",
+      "passed": true
+    },
+    {
+      "title": "does not close a tab when the speech alternatives include cancellation",
+      "passed": true
+    },
+    {
+      "title": "preserves keyboard focus on a clarification choice through unrelated updates",
+      "passed": true
+    },
+    {
+      "title": "keeps an expanded saved routine open through background tab updates",
+      "passed": true
+    },
+    {
+      "title": "keeps recovery visible while listening and retargets unfinished steps by voice",
+      "passed": true
+    },
+    {
+      "title": "installs the production package and executes a typed command through the real engine",
+      "passed": true
+    },
+    {
+      "title": "saves preferences in the real popup and restores them after reopening",
+      "passed": true
+    },
+    {
+      "title": "exports the saved library and reviews a merge without copying device settings or keys",
+      "passed": true
+    },
+    {
+      "title": "revalidates a reviewed import when the saved library changes before confirmation",
+      "passed": true
+    },
+    {
+      "title": "recreates the real offscreen engine after explicit sleep",
+      "passed": true
+    },
+    {
+      "title": "wakes a stopped Chrome service worker with preferences intact",
+      "passed": true
+    },
+    {
+      "title": "handles synthetic speech failure not-allowed and allows a typed recovery",
+      "passed": true
+    },
+    {
+      "title": "handles synthetic speech failure audio-capture and allows a typed recovery",
+      "passed": true
+    },
+    {
+      "title": "asks about conflicting ASR alternatives before opening any tab",
+      "passed": true
+    },
+    {
+      "title": "requires the trigger, discards a partial command on network loss, and stops continuous speech",
+      "passed": true
+    },
+    {
+      "title": "navigates a page outline and landmarks without activating heading links",
+      "passed": true
+    },
+    {
+      "title": "finds phrases across formatting and scrolls the focused horizontal panel",
+      "passed": true
+    },
+    {
+      "title": "excludes hidden SVG text and never reports an empty selection across reordered slots",
+      "passed": true
+    },
+    {
+      "title": "edits a real page using the temporary grant from Chrome\u2019s extension action",
+      "passed": true
+    },
+    {
+      "title": "records cold/warm command latency and retained engine heap over 20 cycles",
+      "passed": true
+    },
+    {
+      "title": "requests only the blocked site and resumes after a preapproved native consent decision",
+      "passed": true
+    },
+    {
+      "title": "blocks a retained numbered target after optional site access is revoked",
+      "passed": true
+    },
+    {
+      "title": "stops dictated chunks after site access is revoked without changing the field",
+      "passed": true
+    },
+    {
+      "title": "opens the actual persistent side panel and keeps it available across tab changes",
+      "passed": true
+    },
+    {
+      "title": "opens the native extension popup at Chrome\u2019s actual popup dimensions",
+      "passed": true
+    },
+    {
+      "title": "makes website-opening routines a type of routine and keeps AI advanced",
+      "passed": true
+    },
+    {
+      "title": "moves a selected tab block in stable order and undoes it without changing selection identity",
+      "passed": true
+    },
+    {
+      "title": "restores the active tab and distinct same-named or unnamed groups",
+      "passed": true
+    },
+    {
+      "title": "selects and replaces literal phrases and moves the caret in installed Chrome",
+      "passed": true
+    },
+    {
+      "title": "dictates at the caret, corrects one phrase, and stops on a controlled editor rejection",
+      "passed": true
+    },
+    {
+      "title": "keeps disabled fieldset buttons out of the clickable targets and resolves shadow labels",
+      "passed": true
+    },
+    {
+      "title": "opts into spoken punctuation through Settings and keeps literal escapes",
+      "passed": true
+    }
+  ],
+  "limits": "Disposable profiles, typed commands, and synthetic ASR; not human microphone/voice accuracy, native OS permission UI, hardware sleep/wake, or battery measurement.",
+  "upgradeSuites": {
+    "1.7.0": {
+      "startTime": "2026-09-26T07:06:56.997Z",
+      "duration": 8157.505,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "1.8.0": {
+      "startTime": "2026-09-26T07:06:50.603Z",
+      "duration": 5545.7880000000005,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    }
+  },
+  "localAiInstallSuite": {
+    "startTime": "2026-09-26T07:06:45.122Z",
+    "duration": 4625.266,
+    "expected": 2,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "nativeSurfaceRepeatSuite": {
+    "startTime": "2026-09-26T07:14:45.010Z",
+    "duration": 50676.835,
+    "expected": 15,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "installRepeatSuite": {
+    "startTime": "2026-09-26T07:24:54.330Z",
+    "duration": 23728.347,
+    "expected": 10,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "navigationReadinessSuite": {
+    "startTime": "2026-09-26T07:29:51.598Z",
+    "duration": 16615.048,
+    "expected": 5,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "fullLocalSuiteCommit": "f3b9193cb57e079703197805c8bbac809ad0d138",
+  "readinessRegressionCommit": "83fcf699ec0f4d6807c17aae6b9e5e4cbad3cfb7"
+}

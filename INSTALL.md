@@ -10,11 +10,11 @@ Use desktop Chrome 120 or later. HandsFree is a developer preview installed thro
 
 The standard edition needs no model download or AI account. The optional `handsfree-for-chrome-local-ai.zip` includes the experimental local model; its source build is **dist-local-ai**. Both editions support cloud AI with your own provider and key.
 
-## Upgrade to 1.8
+## Upgrade to 1.9
 
-Keep the same unpacked folder path so Chrome keeps the extension identity and stored preferences. Replace its old contents with the extracted new package, leaving `manifest.json` directly inside that folder. In `chrome://extensions`, keep Developer mode enabled and select **Reload** on HandsFree. Open the extension and check the **1.8** badge.
+Keep the same unpacked folder path so Chrome keeps the extension identity and stored preferences. Replace its old contents with the extracted new package, leaving `manifest.json` directly inside that folder. In `chrome://extensions`, keep Developer mode enabled and select **Reload** on HandsFree. Open the extension and check the **1.9** badge.
 
-Version 1.8 adds the `sidePanel` permission for persistent controls. Chrome may ask you to acknowledge changed permissions. Existing preferences, nicknames, workspaces, command routines, and website macros stay in local storage. Website macros now appear under **Library → Routines → Open websites**. If upgrading to the standard edition with local AI previously enabled, turn AI off or select a cloud provider under Advanced settings. To retain on-device AI, use the local-AI package at the same path.
+Version 1.9 adds no new extension permissions. If upgrading from before 1.8, Chrome may ask you to acknowledge the side-panel permission added in 1.8. Existing preferences, nicknames, workspaces, command routines, and website macros stay in local storage. Website macros now appear under **Library → Routines → Open websites**. If upgrading to the standard edition with local AI previously enabled, turn AI off or select a cloud provider under Advanced settings. To retain on-device AI, use the local-AI package at the same path.
 
 ## Start using it
 

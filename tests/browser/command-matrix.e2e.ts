@@ -56,6 +56,7 @@ for (const [command, check] of cases) test(`common task: ${command}`, async ({ c
   if (check === 'reopen') await worker.evaluate(id => chrome.tabs.remove(id), ids[2]!);
   if (check === 'group') await worker.evaluate(id => chrome.tabs.highlight({ windowId: id, tabs: [0, 1] }), windowId);
   if (['fill', 'clear', 'check', 'select', 'links', 'scroll'].includes(check)) await activateExtension(page, extensionId);
+  const beforeCommandIds = new Set((await worker.evaluate(id => chrome.tabs.query({ windowId: id }), windowId)).map(tab => tab.id));
   const started = performance.now();
   const reply = await message(control, { target: 'background', type: 'RUN_TEXT', text: command });
   expect(reply.ok).toBe(true);
@@ -71,7 +72,12 @@ for (const [command, check] of cases) test(`common task: ${command}`, async ({ c
   const tabs = await worker.evaluate(id => chrome.tabs.query({ windowId: id }), windowId);
   const original = tabs.find(tab => tab.id === ids[0]);
   switch (check) {
-    case 'new': expect(tabs).toHaveLength(4); expect(tabs.some(tab => !ids.includes(tab.id!) && tab.url === 'chrome://newtab/')).toBe(true); break;
+    case 'new':
+      await expect.poll(async () => {
+        const current = await worker.evaluate(id => chrome.tabs.query({ windowId: id }), windowId);
+        return { count: current.length, createdUrls: current.filter(tab => !beforeCommandIds.has(tab.id)).map(tab => tab.url) };
+      }).toEqual({ count: 4, createdUrls: ['chrome://newtab/'] });
+      break;
     case 'pin': expect(original?.pinned).toBe(true); break;
     case 'unpin': expect(original?.pinned).toBe(false); break;
     case 'mute': expect(original?.mutedInfo?.muted).toBe(true); break;
@@ -83,11 +89,21 @@ for (const [command, check] of cases) test(`common task: ${command}`, async ({ c
     case 'previous': case 'last': expect(tabs.find(tab => tab.active)?.id).toBe(ids[2]); break;
     case 'move-end': expect(original?.index).toBe(2); break;
     case 'move-right': expect(original?.index).toBe(1); break;
-    case 'duplicate': expect(tabs.filter(tab => tab.url === 'https://handsfree.test/start')).toHaveLength(2); break;
+    case 'duplicate':
+      await expect.poll(async () => {
+        const current = await worker.evaluate(id => chrome.tabs.query({ windowId: id }), windowId);
+        return { count: current.length, createdUrls: current.filter(tab => !beforeCommandIds.has(tab.id)).map(tab => tab.url), copies: current.filter(tab => tab.url === 'https://handsfree.test/start').length };
+      }).toEqual({ count: 4, createdUrls: ['https://handsfree.test/start'], copies: 2 });
+      break;
     case 'close': expect(tabs.some(tab => tab.id === ids[0])).toBe(false); expect(tabs).toHaveLength(2); break;
     case 'close-index': expect(tabs.some(tab => tab.id === ids[1])).toBe(false); expect(tabs).toHaveLength(2); break;
     case 'close-others': expect(tabs.map(tab => tab.id)).toEqual([ids[0]]); break;
-    case 'reopen': expect(tabs.some(tab => tab.url === 'https://handsfree.test/notes')).toBe(true); expect(tabs).toHaveLength(3); break;
+    case 'reopen':
+      await expect.poll(async () => {
+        const current = await worker.evaluate(id => chrome.tabs.query({ windowId: id }), windowId);
+        return { count: current.length, createdUrls: current.filter(tab => !beforeCommandIds.has(tab.id)).map(tab => tab.url) };
+      }).toEqual({ count: 3, createdUrls: ['https://handsfree.test/notes'] });
+      break;
     case 'bookmark': expect(await worker.evaluate(() => chrome.bookmarks.search({ url: 'https://handsfree.test/start' }))).toHaveLength(1); break;
     case 'group': expect(original?.groupId).toBeGreaterThanOrEqual(0); expect((await worker.evaluate(id => chrome.tabGroups.get(id), original!.groupId)).title).toBe('Research'); break;
     case 'workspace': expect((await state(control)).library?.workspaces.find(item => item.name === 'Research')?.tabs).toHaveLength(3); break;

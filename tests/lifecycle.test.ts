@@ -137,3 +137,77 @@ it('lets an explicit stop bypass the ordinary speaking pause', () => {
   FakeRecognition.latest.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'stop' } }] });
   expect(final).toHaveBeenCalledExactlyOnceWith('stop'); speech.cancel(); expect(vi.getTimerCount()).toBe(0);
 });
+it('lets a one-shot decision stop bypass relaxed speaking pause while cleaning up recognition', async () => {
+  const speech = new SpeechSession();
+  const result = speech.listen('en-US', vi.fn(), { pace: 'relaxed', immediate: text => text === 'stop' });
+  const recognition = FakeRecognition.latest;
+  recognition.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: 'stop' } }] });
+  await expect(result).resolves.toBe('stop');
+  expect(recognition.abort).toHaveBeenCalledOnce(); expect(recognition.onresult).toBeNull(); expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([false, true])('settles Stop during late offscreen creation and preserves newer ownership: %s', async newerOwner => {
+  let open = false; let release: () => void = () => undefined;
+  const createDocument = vi.fn(() => new Promise<void>(resolve => { release = () => { open = true; resolve(); }; }));
+  const closeDocument = vi.fn(async () => { open = false; });
+  vi.stubGlobal('chrome', {
+    runtime: { getURL: (path: string) => `chrome-extension://test/${path}`, ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, getContexts: vi.fn(async () => open ? [{}] : []), sendMessage: vi.fn(async () => { if (!open) throw new Error('No receiving engine'); return { ok: true }; }) },
+    offscreen: { createDocument, closeDocument, Reason: { USER_MEDIA: 'USER_MEDIA', WORKERS: 'WORKERS' } },
+  });
+  const starting = ensureOffscreen();
+  for (let index = 0; index < 20; index++) await Promise.resolve();
+  expect(createDocument).toHaveBeenCalledOnce();
+  await closeOffscreen(); expect(closeDocument).not.toHaveBeenCalled();
+  const newer = newerOwner ? ensureOffscreen() : Promise.resolve();
+  release(); await Promise.all([starting, newer]);
+  for (let index = 0; index < 30; index++) await Promise.resolve();
+  expect(open).toBe(newerOwner); expect(closeDocument).toHaveBeenCalledTimes(newerOwner ? 0 : 1);
+  if (newerOwner) await closeOffscreen();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it.each([false, true])('disposes a reachable engine while its context query is stalled and safely handles a newer owner: %s', async newerOwner => {
+  let open = true; let release: () => void = () => undefined; let firstQuery = true;
+  const closedListeners: boolean[] = [];
+  const getContexts = vi.fn(async () => {
+    if (firstQuery) { firstQuery = false; await new Promise<void>(resolve => { release = resolve; }); }
+    return open ? [{}] : [];
+  });
+  const createDocument = vi.fn(async () => { open = true; closedListeners.push(false); });
+  const closeDocument = vi.fn(async () => { open = false; });
+  const sendMessage = vi.fn(async () => { closedListeners.push(true); return { ok: true }; });
+  vi.stubGlobal('chrome', {
+    runtime: { getURL: (path: string) => `chrome-extension://test/${path}`, ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, getContexts, sendMessage },
+    offscreen: { createDocument, closeDocument, Reason: { USER_MEDIA: 'USER_MEDIA', WORKERS: 'WORKERS' } },
+  });
+  const starting = ensureOffscreen();
+  for (let index = 0; index < 20; index++) await Promise.resolve();
+  await closeOffscreen();
+  expect(sendMessage).toHaveBeenCalledExactlyOnceWith({ target: 'offscreen', type: 'DISPOSE_ENGINE' });
+  expect(closedListeners).toEqual([true]); expect(closeDocument).not.toHaveBeenCalled();
+  const newer = newerOwner ? ensureOffscreen() : Promise.resolve();
+  release(); await Promise.all([starting, newer]);
+  for (let index = 0; index < 40; index++) await Promise.resolve();
+  expect(closeDocument).toHaveBeenCalledOnce(); expect(open).toBe(newerOwner);
+  expect(createDocument).toHaveBeenCalledTimes(newerOwner ? 1 : 0);
+  if (newerOwner) { expect(closedListeners.at(-1)).toBe(false); await closeOffscreen(); }
+  expect(vi.getTimerCount()).toBe(0);
+});
+it.each(['disposed', 'unresponsive'] as const)('replaces an existing %s document after service-worker lifecycle memory is lost', async mode => {
+  vi.resetModules(); const restarted = await import('../src/background/offscreen-manager');
+  let open = true; let disposed = true;
+  const createDocument = vi.fn(async () => { open = true; disposed = false; });
+  const closeDocument = vi.fn(async () => { open = false; });
+  const sendMessage = vi.fn(async (message: { type: string }) => {
+    if (message.type === 'PING' && disposed) return mode === 'unresponsive' ? new Promise<never>(() => undefined) : { ok: false, error: 'Engine closed' };
+    return { ok: true };
+  });
+  vi.stubGlobal('chrome', {
+    runtime: { getURL: (path: string) => `chrome-extension://test/${path}`, ContextType: { OFFSCREEN_DOCUMENT: 'OFFSCREEN_DOCUMENT' }, getContexts: vi.fn(async () => open ? [{}] : []), sendMessage },
+    offscreen: { createDocument, closeDocument, Reason: { USER_MEDIA: 'USER_MEDIA', WORKERS: 'WORKERS' } },
+  });
+  const ready = restarted.ensureOffscreen(); await vi.advanceTimersByTimeAsync(1501); await ready;
+  expect(sendMessage).toHaveBeenCalledWith({ target: 'offscreen', type: 'PING' });
+  expect(closeDocument).toHaveBeenCalledOnce(); expect(createDocument).toHaveBeenCalledOnce(); expect(disposed).toBe(false);
+  await restarted.ensureOffscreen(); expect(createDocument).toHaveBeenCalledOnce();
+  await restarted.closeOffscreen(); expect(vi.getTimerCount()).toBe(0);
+});

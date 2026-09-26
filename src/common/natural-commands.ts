@@ -102,10 +102,10 @@ export function naturalCommand(raw: string, parse: (text: string) => ChromeActio
   if (m?.[1]) return page({ operation: 'focus', query: m[1] });
   m = raw.match(/^(?:look for|search for|find)\s+(.+?)\s+(?:on|in)\s+(?:this|the)\s+(?:page|website)$/i);
   if (m?.[1]) return page({ operation: 'find', query: m[1].replace(/^["“](.*)["”]$/, '$1') });
-  m = raw.match(/^(?:save|remember) (?:this session|this window|these tabs)(?: as| called)?\s+(.+)$/i);
-  if (m?.[1]) return [{ action: 'workspace_action', params: { operation: 'save', name: m[1] } }];
+  m = raw.match(/^(?:save|remember) (this session|this window|these tabs)(?: as| called)?\s+(.+)$/i);
+  if (m?.[1] && m[2]) return [...(m[1].toLowerCase() === 'these tabs' ? [{ action: 'reference_tabs', params: { reference: 'these' } } as ChromeAction] : []), { action: 'workspace_action', params: { operation: 'save', name: m[2], scope: m[1].toLowerCase() === 'these tabs' ? 'selection' : 'window' } }];
   m = raw.match(/^(?:load|reopen|restore)\s+(?:my\s+)?(.+?)\s+(?:session|workspace)$/i);
-  if (m?.[1]) return [{ action: 'workspace_action', params: { operation: 'restore', name: m[1] } }];
+  if (m?.[1] && !/^(?:the )?previous (?:saved )?version of\b/i.test(m[1])) return [{ action: 'workspace_action', params: { operation: 'restore', name: m[1] } }];
   m = raw.match(/^(?:put|organize|collect)\s+(.+?)\s+(?:in|into)\s+(?:a\s+)?group\s+(?:called|named)\s+(.+)$/i);
   if (m?.[1] && m[2]) return targetAction(m[1], { action: 'group_action', params: { operation: 'create', name: m[2] } });
   if (/^(?:add (?:this|the) page to (?:my )?(?:favorites|bookmarks)|save (?:this|the) page as a bookmark)$/.test(c)) return [{ action: 'bookmark_page', params: {} }];

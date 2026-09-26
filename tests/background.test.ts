@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { defaultSettings, type Message } from '../src/common/schema';
 import type { Reply } from '../src/common/types';
 import type { SessionState } from '../src/background/store';
+import { ensureOffscreen } from '../src/background/offscreen-manager';
 
 type Listener = (raw: unknown, sender: chrome.runtime.MessageSender, respond: (reply: Reply) => void) => boolean;
 let listener: Listener;
@@ -155,6 +156,77 @@ it('accepts explicit voice confirmation and rejects unrelated phrases while revi
   await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'confirm command' }, 'src/offscreen/offscreen.html');
   expect(create).toHaveBeenCalledOnce();
 });
+async function pendingVoiceReview(): Promise<string> {
+  local.settings = { micGranted: true, reviewAiActions: true };
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' });
+  const sessionId = savedSession().capture!.id;
+  const result = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'fresh tab' }, 'src/offscreen/offscreen.html');
+  if (!result.ok || !result.request) throw Error('Missing request');
+  await request({ target: 'background', type: 'EXECUTE_ACTIONS', requestId: result.request.id, source: 'model', transcript: 'fresh tab', actions: [{ action: 'create_tab', params: { url: 'chrome://newtab/' } }] }, 'src/offscreen/offscreen.html');
+  return sessionId;
+}
+it.each([
+  ['confirm command', ['cancel command']],
+  ['confirm command', ['stop listening']],
+  ['confirm command', ['do not confirm command']],
+  ['no', ['confirm command']],
+])('retains a pending plan when spoken review answers conflict: %s', async (text, alternatives) => {
+  const sessionId = await pendingVoiceReview(); const pending = structuredClone(savedSession().pending);
+  expect(await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text, alternatives }, 'src/offscreen/offscreen.html')).toEqual({ ok: true, handled: true, pendingReview: true });
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().pending).toEqual(pending);
+  expect(savedSession().hud).toMatchObject({ phase: 'review', text: expect.stringContaining('conflicting') });
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'confirm command' }, 'src/offscreen/offscreen.html');
+  expect(create).toHaveBeenCalledOnce(); expect(savedSession().pending).toBeNull();
+});
+it('allows equivalent review alternatives without silently using an unsupported primary', async () => {
+  const sessionId = await pendingVoiceReview();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'conform command', alternatives: ['confirm command'] }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().pending).not.toBeNull();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'confirm command', alternatives: ['yes please', 'go ahead', 'unrecognized noise'] }, 'src/offscreen/offscreen.html');
+  expect(create).toHaveBeenCalledOnce(); expect(savedSession().pending).toBeNull();
+});
+it('cancels a review when cancellation is the primary transcript despite an approval alternative', async () => {
+  const sessionId = await pendingVoiceReview();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'cancel command', alternatives: ['confirm command'] }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().pending).toBeNull(); expect(close).toHaveBeenCalledOnce();
+});
+async function pendingVoiceTabChoice(): Promise<string> {
+  const open = [{ id: 1, windowId: 1, title: 'Welcome', url: 'https://example.com/', pinned: false }, { id: 2, windowId: 1, title: 'Personal Gmail', url: 'https://mail.google.com/mail/u/0/', pinned: false }, { id: 3, windowId: 1, title: 'Work Gmail', url: 'https://mail.google.com/mail/u/1/', pinned: false }];
+  vi.mocked(chrome.tabs.query).mockImplementation(async filter => (filter.active ? [open[0]!] : open) as chrome.tabs.Tab[]);
+  vi.mocked(chrome.tabs.get).mockImplementation(async id => structuredClone(open.find(tab => tab.id === id)) as chrome.tabs.Tab);
+  Object.assign(chrome.tabs, { update: vi.fn(async (id: number, props: chrome.tabs.UpdateProperties) => { Object.assign(open.find(tab => tab.id === id)!, props); return open.find(tab => tab.id === id)! as chrome.tabs.Tab; }) });
+  local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' }); const sessionId = savedSession().capture!.id;
+  const result = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'pin Gmail' }, 'src/offscreen/offscreen.html');
+  if (!result.ok || !result.request) throw Error('Missing request');
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: result.request.id, text: 'pin Gmail', spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().question?.choices).toHaveLength(2);
+  return sessionId;
+}
+it.each([['second'], ['cancel command'], ['do not choose first'], ['not the first one']])('retains the original question when spoken options conflict: %s', async alternative => {
+  const sessionId = await pendingVoiceTabChoice(); const question = structuredClone(savedSession().question);
+  expect(await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'first', alternatives: [alternative] }, 'src/offscreen/offscreen.html')).toEqual({ ok: true, handled: true, needsClarification: true });
+  expect(savedSession().question).toEqual(question); expect(chrome.tabs.update).not.toHaveBeenCalled();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'second', alternatives: ['the work account'] }, 'src/offscreen/offscreen.html');
+  expect(chrome.tabs.update).toHaveBeenCalledExactlyOnceWith(3, { pinned: true }); expect(savedSession().question).toBeNull();
+});
+it('keeps a numbered question unanswered when negation is the primary transcript', async () => {
+  const sessionId = await pendingVoiceTabChoice(); const question = structuredClone(savedSession().question);
+  expect(await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'do not choose first', alternatives: ['first'] }, 'src/offscreen/offscreen.html')).toMatchObject({ needsClarification: true });
+  expect(savedSession().question).toEqual(question); expect(chrome.tabs.update).not.toHaveBeenCalled();
+});
+it('keeps primary stop immediate during a numbered question even if an alternative names a choice', async () => {
+  const sessionId = await pendingVoiceTabChoice();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'stop', alternatives: ['first'] }, 'src/offscreen/offscreen.html');
+  expect(savedSession().question).toBeNull(); expect(chrome.tabs.update).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledOnce();
+});
+it('resolves equivalent spoken option numbers without selecting an unsupported primary', async () => {
+  const sessionId = await pendingVoiceTabChoice();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'fist', alternatives: ['first'] }, 'src/offscreen/offscreen.html');
+  expect(chrome.tabs.update).not.toHaveBeenCalled(); expect(savedSession().question).not.toBeNull();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'first', alternatives: ['the first one', 'option 1', 'unrecognized noise'] }, 'src/offscreen/offscreen.html');
+  expect(chrome.tabs.update).toHaveBeenCalledExactlyOnceWith(2, { pinned: true });
+});
 it('stores a key separately from settings and never includes it in the popup state', async () => {
   const settings = { ...defaultSettings, aiProvider: 'openai' as const, aiModel: 'test-model' };
   expect(await request({ target: 'background', type: 'SAVE_SETTINGS', settings, apiKey: 'test-private-key' })).toEqual({ ok: true });
@@ -257,6 +329,49 @@ it('corrects a pending ambiguous command without acting on the unrelated active 
   await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question ? question.id : '', answer: 'The second one' });
   expect(chrome.tabs.update).toHaveBeenCalledExactlyOnceWith(3, { pinned: true }); expect(open[0]!.pinned).toBe(false);
 });
+async function voiceAfterPin() {
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false, mutedInfo: { muted: false } };
+  vi.mocked(chrome.tabs.get).mockImplementation(async () => structuredClone(tab) as chrome.tabs.Tab);
+  vi.mocked(chrome.tabs.query).mockImplementation(async () => [structuredClone(tab)] as chrome.tabs.Tab[]);
+  Object.assign(chrome.tabs, { remove: vi.fn(), update: vi.fn(async (_id: number, properties: chrome.tabs.UpdateProperties) => {
+    Object.assign(tab, properties); if (properties.muted !== undefined) tab.mutedInfo = { muted: properties.muted };
+    return structuredClone(tab) as chrome.tabs.Tab;
+  }) });
+  local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' }); const sessionId = savedSession().capture!.id;
+  const result = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'pin this tab' }, 'src/offscreen/offscreen.html');
+  if (!result.ok || !result.request) throw Error('Missing request');
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: result.request.id, text: 'pin this tab', spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  expect(tab.pinned).toBe(true); expect(savedSession().conversation.lastUndoId).toBe(result.request.id);
+  return { tab, sessionId };
+}
+it.each(['actually close it instead', 'cancel command', 'do not mute it'])('cancels conflicting corrections without undo or replacement: %s', async alternative => {
+  const { tab, sessionId } = await voiceAfterPin();
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', sessionId, replacement: 'mute it', alternatives: [alternative], stopListening: false }, 'src/offscreen/offscreen.html');
+  expect(tab).toMatchObject({ pinned: true, mutedInfo: { muted: false } }); expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(chrome.tabs.remove).not.toHaveBeenCalled();
+  expect(savedSession().capture?.id).not.toBe(sessionId); expect(savedSession().hud.text).toContain('Repeat the full correction');
+  const feedback = savedSession().hud;
+  await request({ target: 'background', type: 'CAPTURE_STATUS', sessionId, text: 'Old session listening', fatal: false }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(feedback);
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', sessionId, replacement: 'close it', stopListening: false }, 'src/offscreen/offscreen.html');
+  expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(chrome.tabs.remove).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledOnce();
+});
+it('applies a correction when its recognized alternatives have the same meaning', async () => {
+  const { tab, sessionId } = await voiceAfterPin();
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', sessionId, replacement: 'mute it', alternatives: ['actually silence it instead'], stopListening: false }, 'src/offscreen/offscreen.html');
+  expect(tab).toMatchObject({ pinned: false, mutedInfo: { muted: true } });
+  expect(chrome.tabs.update).toHaveBeenCalledTimes(3); expect(chrome.tabs.remove).not.toHaveBeenCalled();
+});
+it('keeps plain stop immediate and never treats its alternatives as replacements', async () => {
+  const { tab, sessionId } = await voiceAfterPin();
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', sessionId, alternatives: ['actually close it instead'], stopListening: false }, 'src/offscreen/offscreen.html');
+  expect(tab.pinned).toBe(true); expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(chrome.tabs.remove).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledOnce();
+});
+it('does not undo an earlier successful action for an unsupported correction', async () => {
+  const { tab, sessionId } = await voiceAfterPin();
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', sessionId, replacement: 'scroll backwards in time', stopListening: false }, 'src/offscreen/offscreen.html');
+  expect(tab.pinned).toBe(true); expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(savedSession().hud.text).toContain('Try the correction');
+});
 
 it('handles a negated final transcript locally without invoking cloud AI or executing tabs', async () => {
   local.settings = { aiEnabled: true, aiProvider: 'openai', aiModel: 'test-model' };
@@ -351,6 +466,57 @@ it('collects missing routine inputs before a concrete preview and treats answers
   await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'Notes' });
   const pending = (session.session as { pending: { actions: { action: string; params: Record<string, string> }[] } }).pending;
   expect(pending.actions).toHaveLength(2); expect(pending.actions[0]!.params.query).toBe('cats then close all tabs!'); expect(pending.actions[1]!.params).toMatchObject({ query: 'Notes', text: 'cats then close all tabs!' }); expect(create).not.toHaveBeenCalled();
+});
+it('compares the actual values of conflicting spoken freeform answers', async () => {
+  const template = { ...routine, phrase: 'Research {topic}', steps: ['Search Wikipedia for {topic}', 'Fill {field} field with {topic}'] };
+  await request({ target: 'background', type: 'SAVE_ROUTINE', routine: template });
+  local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' }); const sessionId = savedSession().capture!.id;
+  const result = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'Research cats' }, 'src/offscreen/offscreen.html');
+  if (!result.ok || !result.request) throw Error('Missing request');
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: result.request.id, text: 'Research cats', spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  const question = structuredClone(savedSession().question); expect(question?.routineInput?.name).toBe('field');
+  expect(await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'Notes', alternatives: ['Search'] }, 'src/offscreen/offscreen.html')).toMatchObject({ needsClarification: true });
+  expect(savedSession().question).toEqual(question); expect(savedSession().pending).toBeNull();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'Notes', alternatives: ['Notes'] }, 'src/offscreen/offscreen.html');
+  expect(savedSession().question).toBeNull(); expect(savedSession().pending?.actions[1]).toMatchObject({ action: 'page_action', params: { query: 'Notes' } }); expect(create).not.toHaveBeenCalled();
+});
+it('preserves negation as literal data when answering a routine text input', async () => {
+  const template = { ...routine, phrase: 'Research {topic}', steps: ['Search Wikipedia for {topic}', 'Fill {field} field with {topic}'] };
+  await request({ target: 'background', type: 'SAVE_ROUTINE', routine: template });
+  local.settings = { micGranted: true }; await request({ target: 'background', type: 'TOGGLE_LISTENING' }); const sessionId = savedSession().capture!.id;
+  const result = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'Research cats' }, 'src/offscreen/offscreen.html');
+  if (!result.ok || !result.request) throw Error('Missing request');
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: result.request.id, text: 'Research cats', spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'do not close tabs', alternatives: ['do not close tabs'] }, 'src/offscreen/offscreen.html');
+  expect(savedSession().question).toBeNull(); expect(savedSession().pending?.actions[1]).toMatchObject({ action: 'page_action', params: { query: 'do not close tabs' } }); expect(create).not.toHaveBeenCalled();
+});
+it('preserves negation as the literal name of a saved workspace', async () => {
+  Object.assign(chrome, { tabGroups: { query: vi.fn(async () => []) } });
+  vi.mocked(chrome.tabs.query).mockResolvedValue([{ id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false, active: true }] as chrome.tabs.Tab[]);
+  local.settings = { micGranted: true }; await request({ target: 'background', type: 'TOGGLE_LISTENING' }); const sessionId = savedSession().capture!.id;
+  const result = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'save this workspace' }, 'src/offscreen/offscreen.html');
+  if (!result.ok || !result.request) throw Error('Missing request');
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: result.request.id, text: 'save this workspace', spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().question?.kind).toBe('name');
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'do not close tabs', alternatives: ['do not close tabs'] }, 'src/offscreen/offscreen.html');
+  expect(local.library).toMatchObject({ workspaces: [expect.objectContaining({ name: 'do not close tabs' })] }); expect(savedSession().question).toBeNull();
+});
+it('labels a Library workspace target by name while preserving raw transcript and exact ID execution', async () => {
+  const id = crypto.randomUUID(); const decoyId = crypto.randomUUID();
+  const workspace = { id, name: 'Research', createdAt: 1, tabs: [{ title: 'Saved', url: 'https://saved.example/', pinned: false }] };
+  local.library = { aliases: [], suggestions: [], workspaces: [workspace, { ...workspace, id: decoyId, name: id }] };
+  const transcript = `rename ${id} workspace`;
+  await request({ target: 'background', type: 'RUN_TEXT', text: transcript });
+  const active = savedSession().active!;
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: active.id, text: transcript, final: true }, 'src/offscreen/offscreen.html');
+  const question = savedSession().question!;
+  expect(question.actions).toEqual([{ action: 'workspace_action', params: { operation: 'rename', name: id } }]);
+  expect(savedSession().progress?.steps[0]?.label).toBe('rename workspace Research');
+  expect(savedSession().transcript).toBe(transcript);
+  await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'Physics' });
+  expect(local.library).toMatchObject({ workspaces: [{ id, name: 'Physics' }, { id: decoyId, name: id }] });
+  expect(create).not.toHaveBeenCalled();
 });
 it('imports routines atomically and refuses collisions between variable and literal phrases', async () => {
   await request({ target: 'background', type: 'SAVE_ROUTINE', routine });
@@ -467,6 +633,25 @@ it('requires a choice when a lower-ranked transcript is the only supported comma
   await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pen this tab', alternatives: ['pin this tab'], spoken: true, final: true }, 'src/offscreen/offscreen.html');
   expect(savedSession().question?.choices.map(choice => choice.label)).toEqual(['pin this tab']); expect(create).not.toHaveBeenCalled();
 });
+it.each(['stop', 'cancel command', 'stop listening'])('does not close a tab while the recognized alternative is %s', async alternative => {
+  Object.assign(chrome.tabs, { remove: vi.fn(async () => undefined) });
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'await speech' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'close this tab', alternatives: [alternative], spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  const question = savedSession().question!; expect(question.kind).toBe('speech'); expect(question.choices.map(choice => choice.label)).toEqual(['close this tab', alternative]); expect(chrome.tabs.remove).not.toHaveBeenCalled();
+  await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'second' });
+  expect(chrome.tabs.remove).not.toHaveBeenCalled(); expect(savedSession().question).toBeNull(); expect(savedSession().active).toBeNull();
+});
+it('keeps a primary spoken stop immediate despite a destructive alternative in single-command interpretation', async () => {
+  Object.assign(chrome.tabs, { remove: vi.fn(async () => undefined) });
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'await speech' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'stop', alternatives: ['close this tab'], spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().active).toBeNull(); expect(savedSession().question).toBeNull(); expect(chrome.tabs.remove).not.toHaveBeenCalled(); expect(close).toHaveBeenCalledOnce();
+});
+it('retains stop as literal search data rather than a cancellation decision', async () => {
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'await speech' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'search Google for stop', alternatives: ['search Google for stop'], spoken: true, final: true }, 'src/offscreen/offscreen.html');
+  expect(create).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://www.google.com/search?q=stop' })); expect(savedSession().question).toBeNull();
+});
 it('preserves completed steps and resumes only after an explicit site grant and resume', async () => {
   const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
   vi.mocked(chrome.tabs.get).mockImplementation(async id => ({ ...tab, id }) as chrome.tabs.Tab);
@@ -488,6 +673,116 @@ it('preserves completed steps and resumes only after an explicit site grant and 
   expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(create).toHaveBeenCalledOnce();
   expect(savedSession().progress?.steps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
   expect((await request({ target: 'background', type: 'RESUME_COMMAND', id: recovery.id })).ok).toBe(false);
+});
+type RecoveryInput = 'typed' | 'continuous' | 'single';
+async function recoveryCommand(mode: RecoveryInput, text: string, alternatives?: string[]): Promise<Reply> {
+  if (mode === 'typed') return request({ target: 'background', type: 'RUN_TEXT', text });
+  if (mode === 'continuous') {
+    if (!savedSession()?.capture) await request({ target: 'background', type: 'TOGGLE_LISTENING' });
+    const reply = await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId: savedSession().capture!.id, text, alternatives }, 'src/offscreen/offscreen.html');
+    return reply.ok && reply.request ? request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: reply.request.id, text, alternatives, final: true, spoken: true }, 'src/offscreen/offscreen.html') : reply;
+  }
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' });
+  return request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text, alternatives, final: true, spoken: true }, 'src/offscreen/offscreen.html');
+}
+async function blockedSiteCommand(mode: RecoveryInput = 'typed') {
+  local.settings = { micGranted: true, listeningMode: mode === 'single' ? 'single' : 'continuous' };
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
+  vi.mocked(chrome.tabs.get).mockImplementation(async id => ({ ...tab, id }) as chrome.tabs.Tab);
+  Object.assign(chrome.tabs, { update: vi.fn(async (_id: number, properties: chrome.tabs.UpdateProperties) => { Object.assign(tab, properties); return { ...tab } as chrome.tabs.Tab; }) });
+  const inject = vi.fn(async (): Promise<chrome.scripting.InjectionResult[]> => { throw new Error('Missing host permission'); });
+  Object.assign(chrome, { scripting: { executeScript: inject } });
+  vi.mocked(chrome.permissions.contains).mockImplementation(async () => false);
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'pin this tab then scroll down then open a new tab' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pin this tab then scroll down then open a new tab', final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().recovery?.kind).toBe('site-access');
+  return { tab, allow: () => {
+    vi.mocked(chrome.permissions.contains).mockImplementation(async () => true);
+    inject.mockResolvedValue([{ frameId: 0, documentId: 'test-document' }]);
+    vi.mocked(chrome.tabs.sendMessage).mockResolvedValue({ ok: true, text: 'Scrolled down', focused: true });
+  } };
+}
+it.each<RecoveryInput>(['typed', 'continuous', 'single'])('recovers remaining steps through %s commands only after site access is granted', async mode => {
+  const fixture = await blockedSiteCommand(mode); const recovery = structuredClone(savedSession().recovery); const progress = structuredClone(savedSession().progress);
+  const denied = await recoveryCommand(mode, 'resume remaining steps');
+  expect(denied.ok).toBe(true); if (mode !== 'typed') expect(denied).toMatchObject({ handled: true, resetCapture: true });
+  expect(savedSession().recovery).toEqual(recovery); expect(savedSession().progress).toEqual(progress);
+  expect(savedSession().hud.text).toContain('Allow the requested site'); expect(create).not.toHaveBeenCalled(); expect(savedSession().active).toBeNull();
+  fixture.allow();
+  await recoveryCommand(mode, 'resume remaining steps', mode === 'typed' ? undefined : ['please resume the remaining steps']);
+  expect(chrome.tabs.update).toHaveBeenCalledOnce(); expect(create).toHaveBeenCalledOnce(); expect(savedSession().recovery).toBeNull();
+  expect(savedSession().progress?.steps.map(step => step.status)).toEqual(['completed', 'completed', 'completed']);
+  await recoveryCommand(mode, 'resume remaining steps');
+  expect(create).toHaveBeenCalledOnce(); expect(savedSession().active).toBeNull(); expect(savedSession().hud.text).toContain('no command waiting for recovery');
+});
+it.each(['choose another tab', 'cancel command', 'do not resume remaining steps'])('retains recovery when spoken resume conflicts with %s', async alternative => {
+  const fixture = await blockedSiteCommand('continuous'); fixture.allow(); const recovery = structuredClone(savedSession().recovery);
+  expect(await recoveryCommand('continuous', 'resume remaining steps', [alternative])).toMatchObject({ ok: true, handled: true, resetCapture: true });
+  expect(savedSession().recovery).toEqual(recovery); expect(savedSession().question).toBeNull(); expect(savedSession().pending).toBeNull();
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().hud.text).toContain('different recovery choices');
+  await recoveryCommand('continuous', 'resume remaining steps'); expect(create).toHaveBeenCalledOnce();
+});
+it.each(['expired', 'navigated'])('keeps %s recovery blocked through voice controls', async reason => {
+  const fixture = await blockedSiteCommand('continuous'); fixture.allow();
+  if (reason === 'expired') savedSession().recovery!.at = Date.now() - 6 * 60_000;
+  else fixture.tab.url = 'https://example.com/changed';
+  const recovery = structuredClone(savedSession().recovery);
+  await recoveryCommand('continuous', 'resume remaining steps');
+  expect(savedSession().recovery).toEqual(recovery); expect(create).not.toHaveBeenCalled();
+  expect(savedSession().hud.text).toContain(reason === 'expired' ? 'expired' : 'page changed');
+});
+it.each<RecoveryInput>(['typed', 'continuous'])('chooses a new recovery target through %s commands and resumes only after an answer', async mode => {
+  local.settings = { micGranted: true };
+  const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
+  vi.mocked(chrome.tabs.get).mockImplementation(async () => ({ ...tab }) as chrome.tabs.Tab);
+  vi.mocked(chrome.tabs.query).mockResolvedValue([tab] as chrome.tabs.Tab[]);
+  Object.assign(chrome.tabs, { update: vi.fn(async (_id: number, properties: chrome.tabs.UpdateProperties) => { Object.assign(tab, properties); return { ...tab } as chrome.tabs.Tab; }) });
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'pin missingtarget' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pin missingtarget', final: true }, 'src/offscreen/offscreen.html');
+  const original = savedSession().recovery!.request.id;
+  await recoveryCommand(mode, 'choose another tab');
+  expect(savedSession().recovery).toBeNull(); expect(savedSession().question?.request.id).toBe(original); expect(chrome.tabs.update).not.toHaveBeenCalled();
+  if (mode === 'typed') await request({ target: 'background', type: 'RUN_TEXT', text: 'first' });
+  else await recoveryCommand(mode, 'first');
+  expect(chrome.tabs.update).toHaveBeenCalledExactlyOnceWith(1, { pinned: true });
+});
+it('keeps unrelated speech in single-command mode separate from an older recovery', async () => {
+  await blockedSiteCommand('single');
+  await recoveryCommand('single', 'open a new tab');
+  expect(create).toHaveBeenCalledOnce(); expect(savedSession().recovery).toBeNull();
+  expect(savedSession().progress?.steps).toHaveLength(1);
+});
+async function saveRecoveryPhrase(kind: 'macro' | 'routine', phrase: string): Promise<void> {
+  const id = crypto.randomUUID();
+  if (kind === 'macro') await request({ target: 'background', type: 'SAVE_MACRO', macro: { id, name: 'Saved phrase', phrase, urls: ['https://saved.example/'] } });
+  else await request({ target: 'background', type: 'SAVE_ROUTINE', routine: { id, name: 'Saved phrase', phrase, steps: ['Open https://saved.example/'] } });
+}
+it.each((['macro', 'routine'] as const).flatMap(kind => (['typed', 'continuous', 'single'] as const).flatMap(mode => ['resume remaining steps', 'choose another tab'].map(phrase => ({ kind, mode, phrase })))))('preserves a saved $kind phrase without recovery via $mode: $phrase', async ({ kind, mode, phrase }) => {
+  await saveRecoveryPhrase(kind, phrase);
+  local.settings = { micGranted: true, listeningMode: mode === 'single' ? 'single' : 'continuous' };
+  create.mockImplementationOnce(async () => { expect(savedSession().active).not.toBeNull(); return { id: 11, windowId: 1 }; });
+  await recoveryCommand(mode, phrase);
+  if (kind === 'routine') {
+    expect(savedSession().pending?.routine).toBe(true); expect(create).not.toHaveBeenCalled();
+    await request({ target: 'background', type: 'REVIEW_PLAN', requestId: savedSession().pending!.request.id, approved: true });
+  }
+  expect(create).toHaveBeenCalledOnce(); expect(create).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://saved.example/' }));
+  expect(savedSession().hud.phase).toBe('success'); expect(savedSession().active).toBeNull();
+});
+it.each(['macro', 'routine'] as const)('gives an existing recovery priority over a saved %s resume phrase', async kind => {
+  await saveRecoveryPhrase(kind, 'resume remaining steps');
+  const fixture = await blockedSiteCommand('continuous'); fixture.allow();
+  await recoveryCommand('continuous', 'resume remaining steps');
+  expect(savedSession().recovery).toBeNull(); expect(savedSession().pending).toBeNull();
+  expect(create).toHaveBeenCalledOnce(); expect(create).toHaveBeenCalledWith(expect.objectContaining({ url: 'chrome://newtab/' }));
+});
+it.each(['macro', 'routine'] as const)('gives an existing recovery priority over a saved %s retarget phrase', async kind => {
+  await saveRecoveryPhrase(kind, 'choose another tab'); local.settings = { micGranted: true };
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'pin missingtarget' });
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: savedSession().active!.id, text: 'pin missingtarget', final: true }, 'src/offscreen/offscreen.html');
+  expect(savedSession().recovery?.kind).toBe('missing-target');
+  await recoveryCommand('continuous', 'choose another tab');
+  expect(savedSession().question?.prompt).toContain('remaining command'); expect(savedSession().pending).toBeNull(); expect(create).not.toHaveBeenCalled();
 });
 it('refuses to resume if the target navigated after the blocked command', async () => {
   const tab = { id: 1, windowId: 1, index: 0, title: 'Example', url: 'https://example.com/', pinned: false };
@@ -530,4 +825,308 @@ it('allows basic preferences to be saved while an unused AI configuration is inc
   const reply = await request({ target: 'background', type: 'GET_STATE' });
   expect(reply.ok && reply.state?.settings.language).toBe('en-GB'); expect(reply.ok && reply.state?.hasApiKey).toBe(false);
   expect(chrome.permissions.contains).not.toHaveBeenCalled();
+});
+
+async function singleDecisionReview(): Promise<NonNullable<SessionState['pending']>> {
+  local.settings = { micGranted: true, listeningMode: 'single', feedback: 'none' };
+  const template = { id: crypto.randomUUID(), name: 'Single decision', phrase: 'My single decision', steps: ['Open a new tab'] };
+  await request({ target: 'background', type: 'SAVE_ROUTINE', routine: template });
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' });
+  const active = savedSession().active!;
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: active.id, text: template.phrase, final: true, spoken: true }, 'src/offscreen/offscreen.html');
+  return structuredClone(savedSession().pending!);
+}
+async function decisionSpeech(text: string, alternatives?: string[]): Promise<Reply> {
+  const sessionId = savedSession().capture!.id;
+  return request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text, alternatives }, 'src/offscreen/offscreen.html');
+}
+it('listens for one pending single-command review answer without replacing its original target or expiry', async () => {
+  const pending = await singleDecisionReview(); expect(savedSession().capture).toBeNull(); expect(savedSession().active).toBeNull();
+  vi.mocked(chrome.tabs.query).mockResolvedValue([{ id: 99, windowId: 9 }] as chrome.tabs.Tab[]);
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' });
+  expect(savedSession().pending).toEqual(pending);
+  expect(savedSession().capture).toMatchObject({ decisionId: pending.request.id, decisionKind: 'review' });
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'START_DECISION_LISTENING', decisionId: pending.request.id }));
+  const sessionId = savedSession().capture!.id;
+  await decisionSpeech('confirm command', ['go ahead']);
+  expect(create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ windowId: 1 }));
+  expect(savedSession().pending).toBeNull(); expect(savedSession().capture).toBeNull();
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'confirm command' }, 'src/offscreen/offscreen.html');
+  expect(create).toHaveBeenCalledOnce();
+});
+it('requires another one-shot answer after conflicting readback/approval alternatives and preserves original expiry', async () => {
+  const pending = await singleDecisionReview();
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  await decisionSpeech('confirm command', ['read the command']);
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().pending).toEqual(pending); expect(savedSession().capture).toBeNull();
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  await decisionSpeech('read the command', ['confirm command']);
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().pending).toEqual(pending);
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([message]) => (message as unknown as Message).type === 'SPEAK_READBACK')).toHaveLength(0);
+});
+it('retains a pending decision on microphone timeout, ignores late errors, and never extends expiry', async () => {
+  const pending = await singleDecisionReview();
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  const first = savedSession().capture!.id;
+  await request({ target: 'background', type: 'DECISION_LISTENING_ERROR', sessionId: first, decisionId: pending.request.id, error: 'Listening timed out.' }, 'src/offscreen/offscreen.html');
+  expect(savedSession().capture).toBeNull(); expect(savedSession().pending).toEqual(pending);
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  const second = savedSession().capture!.id;
+  await request({ target: 'background', type: 'DECISION_LISTENING_ERROR', sessionId: first, decisionId: pending.request.id, error: 'Old callback' }, 'src/offscreen/offscreen.html');
+  expect(savedSession().capture?.id).toBe(second);
+  savedSession().pending!.request.startedAt = Date.now() - 6 * 60_000;
+  expect((await decisionSpeech('confirm command')).ok).toBe(false); expect(create).not.toHaveBeenCalled();
+  expect((await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' })).ok).toBe(false);
+  expect((await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id })).ok).toBe(false);
+});
+it('keeps single-decision stop immediate and does not restart continuous capture', async () => {
+  const pending = await singleDecisionReview();
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  await decisionSpeech('stop', ['confirm command']);
+  expect(savedSession().capture).toBeNull(); expect(savedSession().pending).toBeNull(); expect(create).not.toHaveBeenCalled();
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([message]) => (message as unknown as Message).type === 'START_LISTENING')).toHaveLength(1);
+});
+it('reads a pending review only on explicit request even with feedback off, preserving decision and progress', async () => {
+  const pending = await singleDecisionReview(); const progress = structuredClone(savedSession().progress);
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([message]) => (message as unknown as Message).type === 'FEEDBACK')).toHaveLength(0);
+  await request({ target: 'background', type: 'RUN_TEXT', text: 'read the command' });
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'SPEAK_READBACK', segments: expect.arrayContaining(['Step 1. Open a new tab']) }));
+  expect(savedSession().pending).toEqual(pending); expect(savedSession().progress).toEqual(progress); expect(create).not.toHaveBeenCalled();
+  const first = structuredClone(savedSession().decisionReadback);
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  expect(savedSession().decisionReadback).toMatchObject({ page: first!.page, totalPages: first!.totalPages, text: first!.text });
+  expect(savedSession().decisionReadback?.readbackId).not.toBe(first!.readbackId); expect(savedSession().pending).toEqual(pending);
+  const state = await request({ target: 'background', type: 'GET_STATE' }); expect(state.ok && state.state?.decisionReadback?.text).toContain('Step 1. Open a new tab');
+});
+it('treats readback wording as literal freeform input and cancels a pending listener when the UI answers', async () => {
+  local.settings = { micGranted: true, listeningMode: 'single' };
+  const template = { id: crypto.randomUUID(), name: 'Text input', phrase: 'Research {topic}', steps: ['Search Wikipedia for {topic}'] };
+  await request({ target: 'background', type: 'SAVE_ROUTINE', routine: template });
+  await request({ target: 'background', type: 'RUN_ROUTINE', id: template.id });
+  const question = structuredClone(savedSession().question!);
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: question.id });
+  await decisionSpeech('read the choices');
+  expect(savedSession().pending?.actions[0]).toMatchObject({ action: 'search_site', params: { query: 'read the choices' } });
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([message]) => (message as unknown as Message).type === 'SPEAK_READBACK')).toHaveLength(0);
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  await request({ target: 'background', type: 'RUN_ROUTINE', id: template.id });
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: savedSession().question!.id });
+  const sessionId = savedSession().capture!.id;
+  await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: savedSession().question!.id, answer: 'literal user data' });
+  expect(savedSession().capture).toBeNull(); expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ target: 'offscreen', type: 'CANCEL_DECISION_AUDIO' });
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'close all tabs' }, 'src/offscreen/offscreen.html');
+  expect(savedSession().pending?.actions[0]).toMatchObject({ action: 'search_site', params: { query: 'literal user data' } });
+});
+it('refuses stale decision IDs and keeps decisions intact when microphone permission is missing', async () => {
+  const pending = await singleDecisionReview(); local.settings = { micGranted: false };
+  expect((await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id })).ok).toBe(false);
+  expect((await request({ target: 'background', type: 'READ_DECISION', decisionId: crypto.randomUUID(), direction: 'repeat' })).ok).toBe(false);
+  expect(savedSession().pending).toEqual(pending); expect(create).not.toHaveBeenCalled();
+});
+it('pages structured choices without renumbering or answering, then accepts a bounded one-shot numbered answer', async () => {
+  const tabs = Array.from({ length: 5 }, (_, index) => ({ id: index + 1, windowId: 1, index, title: index ? `Gmail account ${index}` : 'Welcome', url: index ? `https://mail.google.com/mail/u/${index}/` : 'https://example.com/', pinned: false }));
+  vi.mocked(chrome.tabs.query).mockImplementation(async filter => (filter.active ? [tabs[0]!] : tabs) as chrome.tabs.Tab[]);
+  vi.mocked(chrome.tabs.get).mockImplementation(async id => tabs.find(tab => tab.id === id)! as chrome.tabs.Tab);
+  Object.assign(chrome.tabs, { update: vi.fn(async (id: number, patch: chrome.tabs.UpdateProperties) => Object.assign(tabs.find(tab => tab.id === id)!, patch)) });
+  local.settings = { micGranted: true, listeningMode: 'single' };
+  await request({ target: 'background', type: 'TOGGLE_LISTENING' });
+  const active = savedSession().active!;
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: active.id, text: 'pin Gmail', final: true, spoken: true }, 'src/offscreen/offscreen.html');
+  const question = structuredClone(savedSession().question!); expect(question.choices).toHaveLength(4);
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: question.id, direction: 'repeat' });
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: question.id, direction: 'next' });
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: question.id, direction: 'next' });
+  expect(savedSession().decisionReadback?.text).toContain('Option 4. Gmail account 4');
+  expect(savedSession().question).toEqual(question); expect(chrome.tabs.update).not.toHaveBeenCalled();
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: question.id });
+  await decisionSpeech('four', ['option 4']);
+  expect(chrome.tabs.update).toHaveBeenCalledExactlyOnceWith(5, { pinned: true });
+  expect(savedSession().capture).toBeNull(); expect(savedSession().question).toBeNull(); expect(savedSession().decisionReadback).toBeUndefined();
+});
+it('reports only the current readback completion and ignores stale notices during a newer listener', async () => {
+  const pending = await singleDecisionReview();
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  const first = savedSession().decisionReadback!.readbackId!;
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  const second = savedSession().decisionReadback!.readbackId!; const before = structuredClone(savedSession().hud);
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId: first, error: 'Old playback failed' }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(before);
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId: second }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud.text).toContain('Page 1 of 1 read'); expect(savedSession().pending).toEqual(pending);
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  const third = savedSession().decisionReadback!.readbackId!;
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  const listening = structuredClone(savedSession().hud); const capture = structuredClone(savedSession().capture);
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId: third }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(listening); expect(savedSession().capture).toEqual(capture);
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  const stopped = structuredClone(savedSession().hud);
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId: third, error: 'Very late error' }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(stopped); expect(savedSession().decisionReadback).toBeUndefined();
+});
+it('refreshes engine activity for explicit readback/listening without extending decision expiry', async () => {
+  const pending = await singleDecisionReview(); savedSession().lastActivity = 0;
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  expect(savedSession().lastActivity).toBeGreaterThan(0); expect(savedSession().pending).toEqual(pending);
+  const readbackId = savedSession().decisionReadback!.readbackId!;
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId, error: 'Readback timed out before this page finished.' }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud.text).toContain('timed out'); expect(savedSession().pending).toEqual(pending);
+  close.mockClear(); alarmListener({ name: 'handsfree-idle', scheduledTime: Date.now() }); await request({ target: 'background', type: 'GET_STATE' });
+  expect(close).not.toHaveBeenCalled();
+  savedSession().lastActivity = 0;
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  expect(savedSession().lastActivity).toBeGreaterThan(0); expect(savedSession().pending).toEqual(pending);
+});
+
+async function settleDecisionOperations(): Promise<void> { for (let index = 0; index < 100; index++) await Promise.resolve(); }
+it.each(['listen', 'readback'] as const)('cancels %s startup before unresolved ensure and drops queued readback without late audio or HUD', async mode => {
+  const pending = await singleDecisionReview(); let release: () => void = () => undefined; let entered = false;
+  vi.mocked(ensureOffscreen).mockImplementationOnce(() => { entered = true; return new Promise<void>(resolve => { release = resolve; }); });
+  vi.mocked(chrome.runtime.sendMessage).mockClear();
+  const starting = request(mode === 'listen' ? { target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id } : { target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  await settleDecisionOperations(); expect(entered).toBe(true);
+  const queued = request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'next' });
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  expect(savedSession().pending).toBeNull(); expect(savedSession().capture).toBeNull(); expect(close).toHaveBeenCalled();
+  const stopped = structuredClone(savedSession().hud);
+  release(); await Promise.all([starting, queued]); await settleDecisionOperations();
+  expect(savedSession().hud).toEqual(stopped);
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => ['START_DECISION_LISTENING', 'SPEAK_READBACK'].includes((value as unknown as Message).type))).toHaveLength(0);
+});
+it.each(['listen', 'readback'] as const)('cancels %s with an unresolved start acknowledgement and ignores its late result', async mode => {
+  const pending = await singleDecisionReview(); let release: (reply: Reply) => void = () => undefined; let entered = false;
+  vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: Message) => {
+    if (message.type === 'START_DECISION_LISTENING' || message.type === 'SPEAK_READBACK') { entered = true; return new Promise<Reply>(resolve => { release = resolve; }); }
+    return Promise.resolve({ ok: true });
+  }) as typeof chrome.runtime.sendMessage);
+  const starting = request(mode === 'listen' ? { target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id } : { target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  await settleDecisionOperations(); expect(entered).toBe(true);
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  const stopped = structuredClone(savedSession().hud);
+  expect(savedSession().pending).toBeNull(); expect(savedSession().capture).toBeNull();
+  release({ ok: true }); await starting; await settleDecisionOperations();
+  expect(savedSession().hud).toEqual(stopped); expect(savedSession().decisionReadback).toBeUndefined(); expect(create).not.toHaveBeenCalled();
+});
+it.each(['listen', 'readback'] as const)('bounds a stalled %s engine startup while retaining the original decision', async mode => {
+  const pending = await singleDecisionReview(); vi.useFakeTimers();
+  let release: () => void = () => undefined;
+  vi.mocked(ensureOffscreen).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  try {
+    const starting = request(mode === 'listen' ? { target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id } : { target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+    await settleDecisionOperations(); await vi.advanceTimersByTimeAsync(10_001); await starting;
+    expect(savedSession().pending).toEqual(pending); expect(savedSession().capture).toBeNull(); expect(savedSession().hud.text).toContain('did not start');
+    release(); await settleDecisionOperations(); expect(create).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+it('preserves decision and readback correlations through service-worker reload without replay after Stop', async () => {
+  const pending = await singleDecisionReview();
+  await request({ target: 'background', type: 'READ_DECISION', decisionId: pending.request.id, direction: 'repeat' });
+  const readbackId = savedSession().decisionReadback!.readbackId!;
+  vi.resetModules(); await import('../src/background/index');
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud.text).toContain('Page 1 of 1 read'); expect(savedSession().pending).toEqual(pending);
+  await request({ target: 'background', type: 'LISTEN_DECISION', decisionId: pending.request.id });
+  const sessionId = savedSession().capture!.id;
+  vi.resetModules(); await import('../src/background/index');
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  const stopped = structuredClone(savedSession().hud);
+  await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'confirm command' }, 'src/offscreen/offscreen.html');
+  await request({ target: 'background', type: 'READBACK_FINISHED', readbackId }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().hud).toEqual(stopped);
+});
+
+const startupModes = ['typed', 'continuous', 'single', 'setup'] as const;
+type StartupMode = typeof startupModes[number];
+function startupMessage(mode: StartupMode): Message {
+  local.settings = { ...defaultSettings, micGranted: true, listeningMode: mode === 'continuous' ? 'continuous' : 'single' };
+  return mode === 'typed' ? { target: 'background', type: 'RUN_TEXT', text: 'open a new tab' }
+    : mode === 'setup' ? { target: 'background', type: 'START_VOICE_SETUP' }
+      : { target: 'background', type: 'TOGGLE_LISTENING' };
+}
+it.each(startupModes)('stops %s before unresolved engine startup and drops earlier queued starts', async mode => {
+  let release: () => void = () => undefined; let entered = false;
+  vi.mocked(ensureOffscreen).mockImplementationOnce(() => { entered = true; return new Promise<void>(resolve => { release = resolve; }); });
+  const starting = request(startupMessage(mode));
+  await settleDecisionOperations(); expect(entered).toBe(true);
+  const activeId = savedSession().active?.id ?? savedSession().capture!.id;
+  const queued = request({ target: 'background', type: 'RUN_TEXT', text: 'open a new tab' });
+  const queuedSetup = request({ target: 'background', type: 'START_VOICE_SETUP' });
+  await request(mode === 'setup' ? { target: 'background', type: 'CANCEL_VOICE_SETUP', id: activeId } : { target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  const stopped = structuredClone(savedSession().hud);
+  expect(savedSession().active).toBeNull(); expect(savedSession().capture).toBeNull(); expect(close).toHaveBeenCalled();
+  if (mode === 'setup') expect(savedSession().voiceSetup?.status).toBe('cancelled');
+  release(); await Promise.all([starting, queued, queuedSetup]); await settleDecisionOperations();
+  expect(savedSession().hud).toEqual(stopped);
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => ['START_LISTENING', 'PARSE_TEXT'].includes((value as unknown as Message).type))).toHaveLength(0);
+  await request({ target: 'background', type: 'EXECUTE_ACTIONS', requestId: activeId, source: 'grammar', transcript: 'open a new tab', actions: [{ action: 'create_tab', params: { url: 'chrome://newtab/' } }] }, 'src/offscreen/offscreen.html');
+  expect(create).not.toHaveBeenCalled(); expect(savedSession().hud).toEqual(stopped);
+});
+it.each(startupModes)('stops %s before its startup acknowledgement and ignores late failures and callbacks', async mode => {
+  let release: (reply: Reply) => void = () => undefined; let entered = false;
+  vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: Message) => {
+    if (message.type === 'START_LISTENING' || message.type === 'PARSE_TEXT') { entered = true; return new Promise<Reply>(resolve => { release = resolve; }); }
+    return Promise.resolve({ ok: true });
+  }) as typeof chrome.runtime.sendMessage);
+  const starting = request(startupMessage(mode));
+  await settleDecisionOperations(); expect(entered).toBe(true);
+  const activeId = savedSession().active?.id ?? savedSession().capture!.id;
+  await request(mode === 'setup' ? { target: 'background', type: 'CANCEL_VOICE_SETUP', id: activeId } : { target: 'background', type: 'TOGGLE_LISTENING' });
+  const stopped = structuredClone(savedSession().hud);
+  expect(savedSession().active).toBeNull(); expect(savedSession().capture).toBeNull();
+  release({ ok: false, error: 'Late startup failure' }); await starting; await settleDecisionOperations();
+  await request({ target: 'background', type: 'ENGINE_LISTENING', requestId: activeId }, 'src/offscreen/offscreen.html');
+  await request({ target: 'background', type: 'EXECUTE_ACTIONS', requestId: activeId, source: 'grammar', transcript: 'open a new tab', actions: [{ action: 'create_tab', params: { url: 'chrome://newtab/' } }] }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(stopped); expect(create).not.toHaveBeenCalled();
+  if (mode === 'setup') expect(savedSession().voiceSetup?.status).toBe('cancelled');
+});
+it.each(startupModes)('bounds unresolved %s engine creation without launching late work', async mode => {
+  vi.useFakeTimers(); let release: () => void = () => undefined;
+  vi.mocked(ensureOffscreen).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  try {
+    const starting = request(startupMessage(mode));
+    await settleDecisionOperations(); await vi.advanceTimersByTimeAsync(10_001);
+    expect(await starting).toEqual({ ok: false, error: 'The voice engine did not start. Try again.' });
+    expect(savedSession().active).toBeNull(); expect(savedSession().capture).toBeNull(); expect(savedSession().hud.phase).toBe('error');
+    if (mode === 'setup') expect(savedSession().voiceSetup?.status).toBe('failed');
+    release(); await settleDecisionOperations();
+    expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => ['START_LISTENING', 'PARSE_TEXT'].includes((value as unknown as Message).type))).toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+it.each(startupModes)('revalidates %s request ownership after engine creation', async mode => {
+  let release: () => void = () => undefined;
+  vi.mocked(ensureOffscreen).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  const starting = request(startupMessage(mode)); await settleDecisionOperations();
+  if (mode === 'setup') savedSession().voiceSetup!.status = 'cancelled';
+  else if (mode === 'continuous') savedSession().capture = null;
+  else savedSession().active = null;
+  release(); await starting;
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => ['START_LISTENING', 'PARSE_TEXT'].includes((value as unknown as Message).type))).toHaveLength(0);
+  expect(create).not.toHaveBeenCalled();
+});
+
+it('automatically resumes continuous listening after an ordinary command cancellation', async () => {
+  await request(startupMessage('continuous')); const previous = savedSession().capture!.id;
+  vi.mocked(chrome.runtime.sendMessage).mockClear();
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: false });
+  expect(savedSession().capture?.id).not.toBe(previous); expect(savedSession().hud.phase).toBe('listening');
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => (value as unknown as Message).type === 'START_LISTENING')).toHaveLength(1);
+});
+
+it.each(['ensure', 'acknowledgement'] as const)('stops an automatic continuous restart during its deferred %s without late audio or HUD', async phase => {
+  await request(startupMessage('continuous')); let entered = false; let release: () => void = () => undefined;
+  vi.mocked(chrome.runtime.sendMessage).mockClear();
+  if (phase === 'ensure') vi.mocked(ensureOffscreen).mockImplementationOnce(() => { entered = true; return new Promise<void>(resolve => { release = resolve; }); });
+  else vi.mocked(chrome.runtime.sendMessage).mockImplementation(((message: Message) => {
+    if (message.type === 'START_LISTENING') { entered = true; return new Promise<Reply>(resolve => { release = () => resolve({ ok: false, error: 'Late restart failure' }); }); }
+    return Promise.resolve({ ok: true });
+  }) as typeof chrome.runtime.sendMessage);
+  const restarting = request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: false });
+  await settleDecisionOperations(); expect(entered).toBe(true); const captureId = savedSession().capture!.id;
+  await request({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  expect(savedSession().capture).toBeNull(); expect(savedSession().active).toBeNull(); expect(close).toHaveBeenCalled();
+  const stopped = structuredClone(savedSession().hud); release(); await restarting; await settleDecisionOperations();
+  await request({ target: 'background', type: 'ENGINE_LISTENING', requestId: captureId }, 'src/offscreen/offscreen.html');
+  expect(savedSession().hud).toEqual(stopped); expect(savedSession().capture).toBeNull(); expect(create).not.toHaveBeenCalled();
+  expect(vi.mocked(chrome.runtime.sendMessage).mock.calls.filter(([value]) => (value as unknown as Message).type === 'START_LISTENING')).toHaveLength(phase === 'ensure' ? 0 : 1);
 });

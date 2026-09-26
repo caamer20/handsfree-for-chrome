@@ -1,7 +1,8 @@
-import { formLiteral, incompleteSearch, productivityCommand } from './productivity-parser';
+import { editingLiteral, isEditingLiteral, formLiteral, incompleteSearch, productivityCommand } from './productivity-parser';
+import { isNavigationCommand } from './navigation-parser';
 import { actionsSchema, type ChromeAction } from './schema';
-import { expandedCommand, expandedSearch } from './expanded-parser';
-import { canonicalCommand, isNegatedCommand } from './language';
+import { expandedCommand, expandedSearch, workspaceRename } from './expanded-parser';
+import { canonicalCommand, isNegatedCommand, stripLeadingRequestFraming } from './language';
 import { literalCommand, naturalCommand, naturalSearch } from './natural-commands';
 import { parseTabCommand } from './tab-commands';
 
@@ -29,7 +30,11 @@ export function parseCommand(input: string): ChromeAction[] | null {
   const c = raw.toLowerCase().replace(/\s+/g, ' ');
   if (!c || c.length > 500) return null;
   let m: RegExpMatchArray | null;
+  const rename = workspaceRename(stripLeadingRequestFraming(input));
+  if (rename) return actionsSchema.parse(rename);
 
+  const editing = editingLiteral(raw);
+  if (isEditingLiteral(raw)) { const result = actionsSchema.safeParse(editing); return result.success ? result.data : null; }
   const form = formLiteral(raw); if (form) return actionsSchema.parse(form);
   const incomplete = incompleteSearch(raw); if (incomplete) return actionsSchema.parse(incomplete);
   const literal = literalCommand(raw); if (literal) return actionsSchema.parse(literal);
@@ -47,13 +52,15 @@ export function parseCommand(input: string): ChromeAction[] | null {
   if (m?.[1]) return single({ action: 'create_tab', params: { url: searchUrl('google', m[1]) } });
 
   // Split sequences before greedy tab-title matching. Search queries above remain intact.
-  const parts = splitSequence(raw);
+  const literalParts = splitSequence(stripLeadingRequestFraming(input));
+  const parts = literalParts.length > 1 && workspaceRename(stripLeadingRequestFraming(literalParts.at(-1)!)) ? literalParts : splitSequence(raw);
   if (parts.length > 1) {
     if (parts.length > 8) return null;
     const parsed = parts.map(parseCommand);
     return parsed.every(part => part !== null) ? actionsSchema.parse(parsed.flat()) : null;
   }
   const productivity = productivityCommand(raw); if (productivity) return actionsSchema.parse(productivity);
+  if (isNavigationCommand(raw)) return null;
   const natural = naturalCommand(raw, parseCommand); if (natural) return actionsSchema.parse(natural);
   const expanded = expandedCommand(raw);
   if (expanded) return actionsSchema.parse(expanded);
@@ -105,6 +112,9 @@ function splitSequence(raw: string): string[] {
     if (/^["“”]$/.test(match[0])) { quoted = !quoted; continue; }
     if (quoted) continue;
     parts.push(raw.slice(start, match.index).trim()); start = (match.index ?? 0) + match[0].length;
+    // A rename later in a sequence still owns its entire literal name tail.
+    // Never reinterpret command words inside that name as another action.
+    if (workspaceRename(stripLeadingRequestFraming(raw.slice(start)))) { parts.push(raw.slice(start).trim()); return parts; }
   }
   parts.push(raw.slice(start).trim()); return parts;
 }

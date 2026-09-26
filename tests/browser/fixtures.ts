@@ -7,28 +7,33 @@ export const test = base.extend<{ context: BrowserContext; extensionId: string; 
   mediaPermission: ['prompt', { option: true }],
   profilePath: ['', { option: true }],
   extensionPath: [resolve(process.env.HANDSFREE_TEST_BUILD ?? 'dist'), { option: true }],
-  context: async ({ headless, mediaPermission, extensionPath: extension, profilePath }, use) => {
+  // Separate bounded startup slots preserve the test body's 45-second budget.
+  context: [async ({ headless, mediaPermission, extensionPath: extension, profilePath }, use) => {
     const context = await chromium.launchPersistentContext(profilePath, {
       channel: 'chromium', headless,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--enable-unsafe-extension-debugging', '--use-fake-device-for-media-stream', ...(mediaPermission === 'allow' ? ['--use-fake-ui-for-media-stream'] : [])],
     });
     try { await use(context); } finally { await context.close(); }
-  },
-  worker: async ({ context }, use) => {
+  }, { scope: 'test', timeout: 30_000 }],
+  worker: [async ({ context }, use) => {
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent('serviceworker');
     await use(worker);
-  },
+  }, { scope: 'test', timeout: 30_000 }],
   extensionId: async ({ worker }, use) => { await use(new URL(worker.url()).host); },
-  control: async ({ context, extensionId }, use) => {
+  control: [async ({ context, extensionId }, use) => {
     // onInstalled opens this page only after storage/session initialization.
     // Wait before creating controls so a late welcome tab cannot steal focus.
-    await expect.poll(() => context.pages().some(page => page.url().endsWith('/onboarding.html'))).toBe(true);
+    // Worker discovery can precede loading its modules on a slow CI runner.
+    await expect.poll(() => context.pages().map(page => page.url()), {
+      timeout: 30_000,
+      message: 'The installed extension must open its welcome page before test controls are created. Observed page URLs:',
+    }).toContain(`chrome-extension://${extensionId}/src/popup/onboarding.html`);
     const page = await context.newPage();
     await page.goto(`chrome-extension://${extensionId}/src/popup/popup.html`);
     await expect(page.locator('#listen')).toContainText('Set up microphone');
     await page.bringToFront();
     await use(page);
-  },
+  }, { scope: 'test', timeout: 45_000 }],
 });
 export { expect };
 export async function message(page: Page, request: Message): Promise<Reply> {

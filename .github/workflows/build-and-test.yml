@@ -25,14 +25,30 @@ jobs:
       - run: npm run package:local-ai
       - run: npx playwright install --with-deps chromium
       - run: xvfb-run --auto-servernum npm run test:browser -- --headed
-      - name: Verify upgrade from published preview
+      - name: Verify upgrades from published 1.8 and 1.7 releases
         env:
           GH_TOKEN: ${{ github.token }}
-          HANDSFREE_UPGRADE_ZIP: previous/handsfree-for-chrome.zip
         run: |
-          gh release download v1.7.0-preview.1 --pattern handsfree-for-chrome.zip --dir previous
-          echo '843275f4e6dc897cb1efccb436568246cb453f3c2d0bf0faeb5b531712b2c239  previous/handsfree-for-chrome.zip' | sha256sum --check
-          npm run test:upgrade
+          gh release download v1.8.0-preview.1 --repo caamer20/handsfree-for-chrome --pattern handsfree-for-chrome.zip --dir previous/1.8.0
+          echo '69813a8cca526bf94da2a847a30ecdf6f554ac794a2294fedaf552c04d46e4e1  previous/1.8.0/handsfree-for-chrome.zip' | sha256sum --check
+          test "$(wc -c < previous/1.8.0/handsfree-for-chrome.zip)" -eq 182986
+          result=0
+          HANDSFREE_UPGRADE_VERSION=1.8.0 HANDSFREE_UPGRADE_ZIP=previous/1.8.0/handsfree-for-chrome.zip npm run test:upgrade || result=1
+          gh release download v1.7.0-preview.1 --repo caamer20/handsfree-for-chrome --pattern handsfree-for-chrome.zip --dir previous/1.7.0
+          echo '843275f4e6dc897cb1efccb436568246cb453f3c2d0bf0faeb5b531712b2c239  previous/1.7.0/handsfree-for-chrome.zip' | sha256sum --check
+          HANDSFREE_UPGRADE_VERSION=1.7.0 HANDSFREE_UPGRADE_ZIP=previous/1.7.0/handsfree-for-chrome.zip npm run test:upgrade || result=1
+          exit "$result"
+      - name: Check out the verified 1.9 candidate for migration testing
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: 98d2f540db2c32af1e0129b1f54fcf0ecd23abeb
+          path: previous-source
+      - name: Verify upgrade from the 1.9 candidate
+        run: |
+          npm --prefix previous-source ci --no-audit --no-fund
+          npm --prefix previous-source run build
+          npm --prefix previous-source run package
+          HANDSFREE_UPGRADE_VERSION=1.9.0 HANDSFREE_UPGRADE_ZIP=previous-source/release/handsfree-for-chrome.zip npm run test:upgrade
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: handsfree-for-chrome

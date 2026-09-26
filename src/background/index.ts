@@ -1,12 +1,14 @@
-import { CommandFailure } from '../common/recovery';
+import { CommandFailure, recoveryIntent } from '../common/recovery';
+import { decisionReadback, readbackIntent, type ReadbackDirection } from '../common/decision-readback';
 import { isSetupCommand } from '../common/setup';
-import { speechChoices, spokenCorrection } from '../common/speech-intent';
+import { speechChoices, speechDecisionConflict, spokenCorrection } from '../common/speech-intent';
 import { LOCAL_AI_AVAILABLE } from '../common/build';
 import type { ProgressEvent } from '../common/progress';
 import { diagnosticsFor } from '../common/diagnostics';
 import { prepareProgress, pauseProgress, completeReviewedProgress } from './progress';
 import { getRoutines, saveRoutine, deleteRoutine, addImportedRoutines } from './routine-store';
-import { compileRoutine, matchRoutine, routineInputs } from '../common/routines';
+import { exportSavedLibrary, previewSavedLibraryImport, importSavedLibrary } from './library-backup';
+import { compileRoutine, findRoutine, matchRoutine, routineInputs } from '../common/routines';
 import type { Routine } from '../common/routine-schema';
 import { messageSchema, type ChromeAction, type HudState, type Message } from '../common/schema';
 import { send, withTimeout, errorText } from '../common/messaging';
@@ -14,7 +16,7 @@ import { IDLE_ALARM, IDLE_MS, MAX_COMMAND_MS, OFFSCREEN_PATH, WATCHDOG_ALARM } f
 import type { ActiveRequest, AppState, Reply } from '../common/types';
 import { dispatchActions, dispatchMacro, requiresReview } from './dispatcher';
 import { closeOffscreen, ensureOffscreen, hasOffscreen } from './offscreen-manager';
-import { addLog, deleteMacro, getLog, getMacros, getSession, getSettings, saveMacro, setSession } from './store';
+import { addLog, deleteMacro, getLog, getMacros, getSession, getSettings, saveMacro, setSession, type SessionState } from './store';
 import { findMacro, type Macro } from '../common/macros';
 import { providerOrigin, validateProvider } from '../common/providers';
 import { getApiKey, removeApiKey, saveApiKey } from './credentials';
@@ -24,15 +26,18 @@ import { parseCommand } from '../common/command-parser';
 import { isNegatedCommand, reviewIntent } from '../common/language';
 import { interruptIntent } from '../common/expanded-parser';
 import { getLibrary, saveAlias, deleteAlias, deleteWorkspace, refreshSiteSuggestions, clearSiteSuggestions } from './library-store';
-import { applyUndo, finalizeUndo, type ExecutionEnvironment } from './execution';
+import { applyUndo, contextAfterClose, contextFor, contextTabs, finalizeUndo, rememberTargets, type ExecutionEnvironment } from './execution';
 import { answerChoice } from './choices';
 import { cancelPage, dictate } from './page-bridge';
 import { isSafeUrl } from '../common/urls';
 import { validateGrounding } from '../offscreen/grounding';
+import type { WorkspaceNames } from '../common/workspace-presentation';
 
 const CAPTURE_ALARM = 'handsfree-capture-heartbeat';
 const executing = new Map<string, AbortController>();
-function abortRunning(): void { for (const controller of [...executing.values(), ...remoteRequests.values()]) controller.abort(); }
+const engineOperations = new Set<AbortController>();
+let engineCancellation = 0;
+function abortRunning(): void { engineCancellation++; for (const controller of [...executing.values(), ...remoteRequests.values(), ...engineOperations]) controller.abort(); }
 const remoteRequests = new Map<string, AbortController>();
 // Serialize state changes only. Network inference must never block the stop hotkey.
 let transitions: Promise<unknown> = Promise.resolve();
@@ -83,7 +88,7 @@ async function stop(text = 'Microphone off. Ready when you are.', phase: HudStat
   if (interruptedId) await pauseProgress(interruptedId, 'cancelled', 'Stopped. Confirmed completed steps remain completed.');
   await cancelPage(conversation.dictation ?? conversation.page);
   conversation.dictation = null; conversation.page = null;
-  await setSession({ active: null, pending: null, question: null, capture: null, recovery: null, conversation, ...(voiceSetup?.status === 'running' ? { voiceSetup: { ...voiceSetup, status: phase === 'error' ? 'failed' : 'cancelled', detail: text } } : {}) });
+  await setSession({ active: null, pending: null, question: null, capture: null, recovery: null, decisionReadback: undefined, conversation, ...(voiceSetup?.status === 'running' ? { voiceSetup: { ...voiceSetup, status: phase === 'error' ? 'failed' : 'cancelled', detail: text } } : {}) });
   for (const controller of remoteRequests.values()) controller.abort();
   remoteRequests.clear();
   await chrome.alarms.clear(CAPTURE_ALARM);
@@ -100,9 +105,9 @@ async function newRequest(): Promise<ActiveRequest> {
   if (tab?.id === undefined) throw new Error('No active Chrome tab found.');
   return { id: crypto.randomUUID(), tabId: tab.id, windowId: tab.windowId, startedAt: Date.now() };
 }
-async function begin(request: ActiveRequest): Promise<void> {
+async function begin(request: ActiveRequest, preserveRecovery = false): Promise<void> {
   const { progress } = await getSession();
-  await setSession({ active: request, transcript: null, recovery: null, ...(progress?.id !== request.id ? { progress: null } : {}) });
+  await setSession({ active: request, transcript: null, decisionReadback: undefined, ...(!preserveRecovery ? { recovery: null } : {}), ...(progress?.id !== request.id && !preserveRecovery ? { progress: null } : {}) });
   await chrome.alarms.create(WATCHDOG_ALARM, { when: Date.now() + MAX_COMMAND_MS });
   await touch();
 }
@@ -135,8 +140,8 @@ async function previewRoutine(routine: Routine, request: ActiveRequest, values: 
     return { ok: true, handled: true, pendingReview: true };
   } catch (error) { await finish({ phase: 'error', text: errorText(error) }, request); return { ok: false, error: errorText(error) }; }
 }
-async function trackExecution(request: ActiveRequest, name: string, actions: ChromeAction[]): Promise<(event: ProgressEvent) => Promise<void>> {
-  const update = await prepareProgress(request.id, name, actions);
+async function trackExecution(request: ActiveRequest, name: string, actions: ChromeAction[], workspaces: WorkspaceNames = []): Promise<(event: ProgressEvent) => Promise<void>> {
+  const update = await prepareProgress(request.id, name, actions, workspaces);
   return async event => {
     await update(event);
     if (event.status === 'running') {
@@ -156,9 +161,10 @@ async function executeMacro(macro: Macro, request: ActiveRequest, transcript: st
   } catch (error) { await pauseProgress(request.id, controller.signal.aborted ? 'cancelled' : 'failed', errorText(error)); if (!controller.signal.aborted) await finish({ phase: 'error', text: errorText(error) }, request, transcript); }
   finally { await persistExecution(env); executing.delete(request.id); }
 }
-async function executePlan(actions: ChromeAction[], source: 'grammar' | 'model', request: ActiveRequest, transcript: string, context: TargetContext = request, overrides: ChoiceOverrides = {}, reviewed = false, previewed = false): Promise<Reply> {
+async function executePlan(actions: ChromeAction[], source: 'grammar' | 'model', request: ActiveRequest, transcript: string, context: TargetContext = request, overrides: ChoiceOverrides = {}, reviewed = false, previewed = false, continuation?: AbortController): Promise<Reply> {
   if (isNegatedCommand(transcript)) { await finish({ phase: 'idle', text: 'No changes made. Say the action you want to run.' }, request); return { ok: true, handled: true }; }
-  if (executing.has(request.id)) return { ok: true, handled: true };
+  if (executing.has(request.id) && executing.get(request.id) !== continuation) return { ok: true, handled: true };
+  if (continuation?.signal.aborted) { await pauseProgress(request.id, 'cancelled', 'Stopped. Confirmed completed steps remain completed.'); return { ok: true, handled: true }; }
   if (actions.some(action => action.action === 'page_action' && action.params.operation === 'dictate_start') && !(await getSession()).capture) throw new Error('Start continuous listening before starting dictation.');
   if (source === 'model') validateGrounding(actions, transcript);
   if (!reviewed && !previewed && requiresReview(actions, source, (await getSettings()).reviewAiActions)) {
@@ -166,10 +172,10 @@ async function executePlan(actions: ChromeAction[], source: 'grammar' | 'model',
     await finish({ phase: 'review', text: 'Review in HandsFree, or say “confirm command” / “cancel command” while listening.' }, request);
     return { ok: true, pendingReview: true };
   }
-  const controller = new AbortController(); executing.set(request.id, controller);
+  const controller = continuation ?? new AbortController(); executing.set(request.id, controller);
   const env = await environment(request, transcript, overrides, reviewed); env.signal = controller.signal;
   try {
-    env.onProgress = await trackExecution(request, transcript.startsWith('Routine:') ? transcript : 'Browser command', actions);
+    env.onProgress = await trackExecution(request, transcript.startsWith('Routine:') ? transcript : 'Browser command', actions, env.library.workspaces);
     const result = await dispatchActions(actions, context, env);
     checkCancelled(controller.signal); await completed(result, request, transcript);
   } catch (error) {
@@ -197,6 +203,40 @@ async function executePlan(actions: ChromeAction[], source: 'grammar' | 'model',
   } finally { await persistExecution(env); executing.delete(request.id); }
   return { ok: true };
 }
+async function recoverByCommand(text: string, alternatives: string[] = [], listeningRequest?: ActiveRequest): Promise<Reply | undefined> {
+  const type = recoveryIntent(text); if (!type) return undefined;
+  const session = await getSession(); const recovery = session.recovery;
+  if (!recovery) {
+    const [routines, macros] = await Promise.all([getRoutines(), getMacros()]);
+    if (findRoutine(routines, text) || findMacro(macros, text)) return undefined;
+  }
+  if (listeningRequest && session.active?.id === listeningRequest.id) {
+    await setSession({ active: null }); await chrome.alarms.clear(WATCHDOG_ALARM);
+  }
+  await setSession({ transcript: text });
+  const boundary: Reply = { ok: true, handled: true, resetCapture: true };
+  if (!recovery) {
+    await hud({ phase: 'error', text: 'There is no command waiting for recovery. Try a new command.' });
+    return boundary;
+  }
+  const conflict = speechDecisionConflict(text, alternatives, candidate => {
+    const recoveryType = recoveryIntent(candidate); if (recoveryType) return recoveryType;
+    const interrupt = interruptIntent(candidate); if (interrupt) return `interrupt:${JSON.stringify(interrupt)}`;
+    if (isNegatedCommand(candidate) || reviewIntent(candidate) === false) return 'cancel';
+    const actions = parseCommand(candidate); return actions ? JSON.stringify(actions) : undefined;
+  });
+  if (conflict) {
+    await hud({ phase: 'error', text: 'I heard different recovery choices. Repeat “resume remaining steps” or “choose another tab”.' }, recovery.request.tabId);
+    return boundary;
+  }
+  try {
+    const result = await handle({ target: 'background', type, id: recovery.id });
+    return result.ok ? { ...result, ...boundary } : { ...boundary, message: result.error };
+  } catch (error) {
+    await hud({ phase: 'error', text: errorText(error) }, recovery.request.tabId);
+    return boundary;
+  }
+}
 async function handleTranscript(request: ActiveRequest, raw: string, spoken = false, alternatives: string[] = []): Promise<Reply> {
   const session = await getSession();
   if (session.voiceSetup?.id === request.id) {
@@ -220,10 +260,19 @@ async function handleTranscript(request: ActiveRequest, raw: string, spoken = fa
     await setSession({ voiceSetup: { ...setup, status: 'passed', stage: 'complete', tabId: tab.id, detail: 'You did it. Your spoken command opened a new tab, and Chrome confirmed it. The microphone is off.' } });
     return { ok: true, handled: true };
   }
+  if (recoveryIntent(raw)) {
+    // Single-command listening must retain recovery until its final speech is understood.
+    const recovery = await recoverByCommand(raw, spoken ? alternatives : [], request);
+    if (recovery) return recovery;
+  }
+  if (session.recovery) await setSession({ recovery: null, ...(session.progress?.id !== request.id ? { progress: null } : {}) });
   if (isNegatedCommand(raw)) { await finish({ phase: 'idle', text: 'No changes made. Say the action you want to run.' }, request); return { ok: true, handled: true }; }
+  const immediate = interruptIntent(raw);
+  if (immediate && !immediate.replacement) return interrupt(undefined, immediate.stopListening);
   const routines = await getRoutines(); const macros = await getMacros();
   if (spoken) {
     const choices = speechChoices(raw, alternatives, text => {
+      const intent = interruptIntent(text); if (intent) return `interrupt:${JSON.stringify(intent)}`;
       const routine = matchRoutine(routines, text); if (routine) return `routine:${routine.routine.id}:${JSON.stringify(routine.values)}`;
       const macro = findMacro(macros, text); if (macro) return `macro:${macro.id}`;
       const actions = parseCommand(text); return actions ? JSON.stringify(actions) : undefined;
@@ -237,7 +286,7 @@ async function handleTranscript(request: ActiveRequest, raw: string, spoken = fa
   }
   // A saved exact phrase retains precedence over conversational rewriting.
   const text = spoken && !matchRoutine(routines, raw) && !findMacro(macros, raw) ? spokenCorrection(raw) : raw;
-  const intent = interruptIntent(text); if (intent) return interrupt(intent.replacement, intent.stopListening);
+  const intent = interruptIntent(text); if (intent) return interrupt(intent.replacement, intent.stopListening, undefined, spoken ? alternatives : []);
   const routine = matchRoutine(routines, text);
   if (routine) return previewRoutine(routine.routine, request, routine.values);
   const macro = findMacro(macros, text);
@@ -251,6 +300,7 @@ async function answer(questionId: string, text: string): Promise<Reply> {
   if (!question || question.id !== questionId || Date.now() - question.at > 5 * 60_000) throw new Error('That question expired. Try the command again.');
   const choice = answerChoice(question, text);
   if (!choice) { await hud({ phase: 'clarify', text: 'Say an option number or a more specific title, or choose below.' }, question.request.tabId); return { ok: true, handled: true, needsClarification: true }; }
+  await cancelDecisionAudio();
   await setSession({ question: null }); await begin({ ...question.request, startedAt: Date.now() });
   if (question.speechChoice && choice.value) {
     await setSession({ transcript: choice.value });
@@ -263,13 +313,16 @@ async function answer(questionId: string, text: string): Promise<Reply> {
 async function review(requestId: string, approved: boolean): Promise<void> {
   const { pending } = await getSession();
   if (!pending || pending.request.id !== requestId) throw new Error('This plan has expired. Try the command again.');
+  await cancelDecisionAudio();
   await setSession({ pending: null });
   if (!approved) { await pauseProgress(pending.request.id, 'cancelled', 'Review dismissed.'); await finish({ phase: 'idle', text: 'Command dismissed' }, pending.request); return; }
   if (Date.now() - pending.request.startedAt > 5 * 60_000) { await finish({ phase: 'error', text: 'This plan expired. Try the command again.' }, pending.request); return; }
   await begin(pending.request);
   if (!pending.operation) { await executePlan(pending.actions, 'grammar', pending.request, pending.transcript, pending.context ?? pending.request, pending.overrides, !pending.routine, !!pending.routine); return; }
   const controller = new AbortController(); executing.set(pending.request.id, controller);
-  let succeeded = false;
+  let nextContext: TargetContext | undefined = pending.context ?? pending.request;
+  const env = await environment(pending.request, pending.transcript);
+  const opened: chrome.tabs.Tab[] = [];
   try {
     if (pending.operation === 'close') {
       const targets = pending.targets ?? [];
@@ -277,37 +330,67 @@ async function review(requestId: string, approved: boolean): Promise<void> {
       const duplicates = /duplicate|copies/i.test(pending.transcript);
       if (tabs.some((tab, index) => tab.url !== targets[index]?.url || tab.windowId !== targets[index]?.windowId || (duplicates && (tab.active || tab.pinned)))) throw new Error('A reviewed tab changed. Run the command again to review the current targets.');
       checkCancelled(controller.signal); await chrome.tabs.remove(tabs.map(tab => tab.id!));
+      env.state.lastUndoId = null;
+      nextContext = await contextAfterClose(nextContext, tabs.map(tab => tab.id!));
+      if (nextContext) rememberTargets(env, await contextTabs(nextContext));
+      else { env.state.previousTargets = env.state.targets; env.state.targets = []; }
+      await setSession({ conversation: env.state });
       await completeReviewedProgress(pending.request.id, `Closed ${tabs.length} reviewed tabs`);
+      checkCancelled(controller.signal);
       await finish({ phase: 'success', text: `Closed ${tabs.length} reviewed tabs` }, pending.request, pending.transcript);
     } else {
-      let opened = 0;
-      for (const url of pending.urls ?? []) { checkCancelled(controller.signal); if (!isSafeUrl(url)) throw new Error('An article URL is invalid.'); await chrome.tabs.create({ url, windowId: pending.request.windowId, active: opened++ === 0 }); }
-      await completeReviewedProgress(pending.request.id, `Opened ${opened} unread articles`);
-      await finish({ phase: 'success', text: `Opened ${opened} unread articles` }, pending.request, pending.transcript);
+      const urls = pending.urls ?? [];
+      if (urls.some(url => !isSafeUrl(url))) throw new Error('An article URL is invalid.');
+      for (const url of urls) {
+        checkCancelled(controller.signal);
+        const tab = await chrome.tabs.create({ url, windowId: nextContext.windowId, active: !opened.length });
+        opened.push(tab); env.state.lastUndoId = null;
+        rememberTargets(env, opened); await setSession({ conversation: env.state });
+      }
+      // Follow-up page actions use the first article; “them” retains all opened articles.
+      nextContext = contextFor(opened.slice(0, 1), nextContext);
+      await completeReviewedProgress(pending.request.id, `Opened ${opened.length} unread articles`);
+      checkCancelled(controller.signal);
+      await finish({ phase: 'success', text: `Opened ${opened.length} unread articles` }, pending.request, pending.transcript);
     }
-    const session = await getSession(); session.conversation.lastUndoId = null; await setSession({ conversation: session.conversation });
-    succeeded = true;
-  } catch (error) { await pauseProgress(pending.request.id, controller.signal.aborted ? 'cancelled' : 'failed', errorText(error)); if (!controller.signal.aborted) await finish({ phase: 'error', text: errorText(error) }, pending.request, pending.transcript); }
+    checkCancelled(controller.signal);
+    if (pending.actions.length && !nextContext) throw new Error('The selected tabs were closed. No tab remains in that window for the next step.');
+    if (pending.actions.length && nextContext) {
+      await begin({ ...pending.request, startedAt: Date.now() });
+      checkCancelled(controller.signal);
+      // Keep the same cancellation handle while entering the remaining plan.
+      await executePlan(pending.actions, 'grammar', pending.request, pending.transcript, nextContext, pending.overrides, false, false, controller);
+    }
+  } catch (error) { const detail = `${opened.length ? `Opened ${opened.length} articles before stopping. ` : ''}${errorText(error)}`; await pauseProgress(pending.request.id, controller.signal.aborted ? 'cancelled' : 'failed', detail); if (!controller.signal.aborted) await finish({ phase: 'error', text: detail }, pending.request, pending.transcript); }
   finally { executing.delete(pending.request.id); }
-  if (succeeded && pending.actions.length) {
-    await begin({ ...pending.request, startedAt: Date.now() });
-    await executePlan(pending.actions, 'grammar', pending.request, pending.transcript, pending.context ?? pending.request, pending.overrides);
-  }
 }
-async function interrupt(replacement?: string, stopListening = false, sessionId?: string): Promise<Reply> {
+function correctionPlan(text: string): ChromeAction[] | null {
+  try { return parseCommand(text.replace(/\s+instead[.!?]*$/i, '')); } catch { return null; }
+}
+async function interrupt(replacement?: string, stopListening = false, sessionId?: string, alternatives: string[] = []): Promise<Reply> {
   const previous = await getSession();
   if (sessionId && previous.capture?.id !== sessionId) return { ok: true, handled: true };
   const settings = await getSettings();
-  await stop(stopListening ? 'Microphone off. Ready when you are.' : 'Command cancelled.');
+  const conflict = !!replacement && speechChoices(replacement, alternatives, text => {
+    const intent = interruptIntent(text);
+    if (intent && !intent.replacement) return `stop:${intent.stopListening}`;
+    const actions = correctionPlan(intent?.replacement ?? text); return actions ? JSON.stringify(actions) : undefined;
+  }).length > 0;
+  const repeat = 'I heard different corrections. The command was cancelled. Repeat the full correction.';
+  const stopping = stop(conflict ? repeat : stopListening ? 'Microphone off. Ready when you are.' : 'Command cancelled.');
+  // stop() invalidates the previous generation synchronously; another Stop
+  // arriving during its cleanup must also invalidate this automatic restart.
+  const restartGeneration = engineCancellation;
+  await stopping;
   let reply: Reply = { ok: true, handled: true };
-  if (replacement) {
+  if (replacement && !conflict) {
     const request = await newRequest(); await begin(request);
     const env = await environment(request, replacement);
+    let actions = correctionPlan(replacement);
     const currentId = previous.active?.id ?? previous.question?.request.id ?? previous.pending?.request.id;
-    if (Date.now() - env.state.at < 60_000 && env.state.lastUndoId && (!currentId || env.state.lastUndoId === currentId)) {
+    if (actions && Date.now() - env.state.at < 60_000 && env.state.lastUndoId && (!currentId || env.state.lastUndoId === currentId)) {
       try { await applyUndo(env); await persistExecution(env); } catch { /* Keep newer manual changes. */ }
     }
-    let actions = parseCommand(replacement.replace(/\s+instead[.!?]*$/i, ''));
     let context: TargetContext = request;
     if (actions?.[0]?.action === 'reference_tabs' && previous.question) {
       const selector = previous.question.actions[0];
@@ -318,21 +401,153 @@ async function interrupt(replacement?: string, stopListening = false, sessionId?
     if (actions) reply = await executePlan(actions, 'grammar', request, replacement, context, previous.question?.overrides);
     else await finish({ phase: 'error', text: 'Try the correction as a complete command, such as “pin it instead”.' }, request);
   }
-  if (previous.capture && !stopListening) {
+  if (previous.capture && !previous.capture.decisionId && !stopListening && restartGeneration === engineCancellation) {
     const id = crypto.randomUUID(); await setSession({ capture: { id, startedAt: Date.now(), lastSeen: Date.now() } });
-    await chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: 0.5 }); await ensureOffscreen();
-    await send({ target: 'offscreen', type: 'START_LISTENING', requestId: id, settings });
-    const current = await getSession(); if (!current.pending && !current.question) await hud({ phase: 'listening', text: replacement ? current.hud.text : 'Command cancelled. Listening…' });
+    await chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: 0.5 });
+    await startEngine({ target: 'offscreen', type: 'START_LISTENING', requestId: id, settings }, true, restartGeneration);
+    const current = await getSession(); if (restartGeneration === engineCancellation && current.capture?.id === id && !current.pending && !current.question) await hud({ phase: 'listening', text: conflict ? repeat : replacement ? current.hud.text : 'Command cancelled. Listening…' });
   }
   return reply;
 }
+function waitingDecision(session: SessionState): { id: string; kind: 'question' | 'review'; at: number; tabId: number } | undefined {
+  if (session.question) return { id: session.question.id, kind: 'question', at: session.question.at, tabId: session.question.request.tabId };
+  if (session.pending) return { id: session.pending.request.id, kind: 'review', at: session.pending.request.startedAt, tabId: session.pending.request.tabId };
+  return undefined;
+}
+function checkedDecision(session: SessionState, id: string) {
+  const decision = waitingDecision(session);
+  if (!decision || decision.id !== id || Date.now() - decision.at > 5 * 60_000) throw new Error('That question or review expired. Cancel it and try the command again.');
+  return decision;
+}
+async function cancelDecisionAudio(): Promise<void> {
+  const session = await getSession();
+  if (session.capture?.decisionId) { await setSession({ capture: null }); await chrome.alarms.clear(CAPTURE_ALARM); }
+  if (await hasOffscreen()) await withTimeout(send({ target: 'offscreen', type: 'CANCEL_DECISION_AUDIO' }), 1500, 'Voice cancellation timed out.').catch(() => undefined);
+}
+async function engineAwait<T>(task: () => Promise<T>, signal: AbortSignal, message: string): Promise<T> {
+  checkCancelled(signal);
+  let cancel: () => void = () => undefined;
+  const aborted = new Promise<never>((_, reject) => { cancel = () => reject(new Error('Command cancelled.')); signal.addEventListener('abort', cancel, { once: true }); });
+  try { return await withTimeout(Promise.race([task(), aborted]), 10_000, message); }
+  finally { signal.removeEventListener('abort', cancel); }
+}
+async function startEngine(message: Extract<Message, { type: 'START_LISTENING' | 'PARSE_TEXT' }>, continuous: boolean, generation: number, setup = false): Promise<void> {
+  if (generation !== engineCancellation) return;
+  const controller = new AbortController(); engineOperations.add(controller);
+  const currentRequest = (session: SessionState): boolean => (continuous ? session.capture?.id : session.active?.id) === message.requestId
+    && (!setup || (session.voiceSetup?.id === message.requestId && session.voiceSetup.status === 'running'));
+  try {
+    await engineAwait(ensureOffscreen, controller.signal, 'The voice engine did not start. Try again.');
+    const current = await getSession(); checkCancelled(controller.signal);
+    if (!currentRequest(current)) return;
+    const reply = await engineAwait(() => send(message), controller.signal, 'The voice engine did not respond. Try again.');
+    const latest = await getSession(); checkCancelled(controller.signal);
+    if (!currentRequest(latest)) return;
+    if (!reply?.ok) throw new Error(reply && !reply.ok ? reply.error : 'The voice engine did not respond.');
+  } catch (error) {
+    if (controller.signal.aborted || generation !== engineCancellation) return;
+    const current = await getSession();
+    if (controller.signal.aborted || !currentRequest(current)) return;
+    await stop(errorText(error), 'error'); throw error;
+  } finally { engineOperations.delete(controller); }
+}
+async function listenDecision(id: string): Promise<void> {
+  const controller = new AbortController(); engineOperations.add(controller);
+  let captureId: string | undefined;
+  try {
+    const session = await getSession(); const decision = checkedDecision(session, id); checkCancelled(controller.signal);
+    if (session.active || session.capture) throw new Error('The microphone or a command is already active. Stop it before listening for another answer.');
+    const settings = await getSettings(); checkCancelled(controller.signal);
+    if (!settings.micGranted) throw new Error('Enable the microphone in setup first. Your question or review is still waiting.');
+    const capture = { id: crypto.randomUUID(), decisionId: id, decisionKind: decision.kind, startedAt: Date.now(), lastSeen: Date.now() }; captureId = capture.id;
+    await setSession({ capture }); await chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: 0.5 });
+    await touch(); checkCancelled(controller.signal);
+    await hud({ phase: 'listening', text: decision.kind === 'review' ? 'Listening for one review answer. Say “confirm command” or “cancel command”.' : 'Listening for one answer. Your original question is still waiting.' }, decision.tabId);
+    await engineAwait(ensureOffscreen, controller.signal, 'The voice engine did not start. Your decision is still waiting.');
+    const current = await getSession(); checkCancelled(controller.signal); checkedDecision(current, id);
+    if (current.capture?.id !== capture.id) return;
+    const reply = await engineAwait(() => send({ target: 'offscreen', type: 'START_DECISION_LISTENING', sessionId: capture.id, decisionId: id, settings }), controller.signal, 'The voice engine did not respond. Your decision is still waiting.');
+    checkCancelled(controller.signal);
+    if (!reply.ok) throw new Error(reply.error);
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    if (!captureId) throw error;
+    await closeOffscreen();
+    if (!controller.signal.aborted) await decisionListeningError(captureId, id, errorText(error));
+  } finally { engineOperations.delete(controller); }
+}
+async function decisionListeningError(sessionId: string, decisionId: string, text: string): Promise<void> {
+  const session = await getSession(); if (session.capture?.id !== sessionId || session.capture.decisionId !== decisionId) return;
+  await cancelDecisionAudio(); const decision = waitingDecision(session);
+  if (decision?.id === decisionId) await hud({ phase: decision.kind === 'review' ? 'review' : 'clarify', text: `${text} Your decision is still waiting; choose Listen to answer to try again.`.slice(0, 500) }, decision.tabId);
+}
+async function readDecision(id: string, direction: ReadbackDirection): Promise<Reply> {
+  const controller = new AbortController(); engineOperations.add(controller);
+  try {
+    const session = await getSession(); const decision = checkedDecision(session, id); checkCancelled(controller.signal);
+    if (session.active || session.capture?.decisionId) throw new Error('Finish speaking before reading the decision aloud.');
+    const current = session.decisionReadback?.decisionId === id ? session.decisionReadback.page : 0;
+    const workspaces = session.pending?.actions.some(action => action.action === 'workspace_action') ? (await engineAwait(getLibrary, controller.signal, 'Saved workspace names could not be read. Your decision is still waiting.')).workspaces : [];
+    checkCancelled(controller.signal);
+    const result = decisionReadback(session.question, session.pending, current + (direction === 'next' ? 1 : direction === 'previous' ? -1 : 0), workspaces);
+    const readbackId = crypto.randomUUID();
+    await setSession({ decisionReadback: { decisionId: id, readbackId, page: result.page, totalPages: result.totalPages, text: result.text } });
+    await touch();
+    try {
+      await engineAwait(ensureOffscreen, controller.signal, 'The voice engine did not start. Your decision is still waiting.');
+      const latest = await getSession(); checkCancelled(controller.signal); checkedDecision(latest, id);
+      if (latest.decisionReadback?.readbackId !== readbackId) return { ok: true, handled: true };
+      const reply = await engineAwait(() => send({ target: 'offscreen', type: 'SPEAK_READBACK', readbackId, segments: result.segments }), controller.signal, 'Readback did not start. Your decision is still waiting.');
+      checkCancelled(controller.signal);
+      await hud({ phase: decision.kind === 'review' ? 'review' : 'clarify', text: reply.ok ? `Reading page ${result.page + 1} of ${result.totalPages}. Your decision is unchanged.` : `${reply.error} Your decision is unchanged.`.slice(0, 500) }, decision.tabId);
+    } catch (error) {
+      if (controller.signal.aborted) return { ok: true, handled: true };
+      if (!session.capture) await closeOffscreen(); else await cancelDecisionAudio();
+      if (controller.signal.aborted) return { ok: true, handled: true };
+      await readbackFinished(readbackId, errorText(error));
+    }
+    return { ok: true, handled: true, resetCapture: true, ...(decision.kind === 'review' ? { pendingReview: true } : { needsClarification: true }) };
+  } catch (error) {
+    if (controller.signal.aborted) return { ok: true, handled: true };
+    throw error;
+  } finally { engineOperations.delete(controller); }
+}
+async function readbackFinished(readbackId: string, error?: string): Promise<void> {
+  const session = await getSession(); const reading = session.decisionReadback; const decision = waitingDecision(session);
+  if (!reading || reading.readbackId !== readbackId || reading.decisionId !== decision?.id) return;
+  await setSession({ decisionReadback: { ...reading, readbackId: undefined } });
+  if (session.active || session.capture?.decisionId) return;
+  const text = Date.now() - decision.at > 5 * 60_000 ? 'That question or review expired. Cancel it and try the command again.' : error ? `${error} Your decision is unchanged.` : `Page ${reading.page + 1} of ${reading.totalPages} read. ${session.capture ? 'Listening for your answer.' : decision.kind === 'review' ? 'Choose Listen to answer or use the review buttons.' : 'Choose Listen to answer, or type your answer.'}`;
+  await hud({ phase: decision.kind === 'review' ? 'review' : 'clarify', text: text.slice(0, 500) }, decision.tabId);
+}
+async function decisionReadbackCommand(session: SessionState, text: string, alternatives: string[] = []): Promise<Reply | undefined> {
+  const decision = waitingDecision(session);
+  if (!decision || (session.question && ['name', 'text'].includes(session.question.kind))) return undefined;
+  const direction = readbackIntent(text); if (!direction) return undefined;
+  const conflict = speechDecisionConflict(text, alternatives, candidate => {
+    const reading = readbackIntent(candidate); if (reading) return `read:${reading}`;
+    const interrupt = interruptIntent(candidate); if (interrupt) return `interrupt:${JSON.stringify(interrupt)}`;
+    if (session.question) { const choice = answerChoice(session.question, candidate); return choice ? JSON.stringify([choice.id, choice.value]) : undefined; }
+    const approval = reviewIntent(candidate); return approval === undefined ? undefined : String(approval);
+  });
+  if (conflict) {
+    await hud({ phase: decision.kind === 'review' ? 'review' : 'clarify', text: 'I heard different decision controls. Repeat the readback request or your answer. Nothing was selected.' }, decision.tabId);
+    return { ok: true, handled: true, resetCapture: true };
+  }
+  return readDecision(decision.id, direction);
+}
 async function start(text?: string, macroId?: string, routineId?: string): Promise<void> {
+  const generation = engineCancellation;
   const session = await getSession();
   if (text !== undefined) {
     const intent = interruptIntent(text); if (intent) { await interrupt(intent.replacement, intent.stopListening); return; }
+    if (await decisionReadbackCommand(session, text)) return;
     if (session.question) { await answer(session.question.id, text); return; }
     if (session.pending && reviewIntent(text) !== undefined) { await review(session.pending.request.id, reviewIntent(text)!); return; }
+    if (await recoverByCommand(text)) return;
   }
+  const decision = waitingDecision(session);
+  if (text === undefined && macroId === undefined && routineId === undefined && decision && !session.active && !session.capture) { await listenDecision(decision.id); return; }
   if (session.active || session.capture || session.pending || session.question) {
     if (text !== undefined || macroId !== undefined || routineId !== undefined) throw new Error('Stop listening or finish the current command before starting another.');
     await stop(); return;
@@ -353,16 +568,12 @@ async function start(text?: string, macroId?: string, routineId?: string): Promi
     await setSession({ capture: { id: request.id, startedAt: Date.now(), lastSeen: Date.now() } });
     await chrome.alarms.create(CAPTURE_ALARM, { periodInMinutes: 0.5 });
     await touch();
-  } else await begin(request);
+  } else await begin(request, text === undefined && !macro && !!session.recovery);
   await hud({ phase: text === undefined && !macro ? 'listening' : 'thinking', text: macro ? `Opening ${macro.name}…` : text === undefined ? 'Listening… press the shortcut again to stop.' : 'Interpreting your command…' }, request.tabId);
   if (macro) { await executeMacro(macro, request, text ?? macro.phrase); return; }
-  try {
-    await ensureOffscreen();
-    const reply = await withTimeout(send(text === undefined
-      ? { target: 'offscreen', type: 'START_LISTENING', requestId: request.id, settings }
-      : { target: 'offscreen', type: 'PARSE_TEXT', requestId: request.id, settings, text }), 10_000, 'The voice engine did not respond. Try again.');
-    if (!reply?.ok) throw new Error(reply && !reply.ok ? reply.error : 'The voice engine did not respond.');
-  } catch (error) { await stop(errorText(error), 'error'); throw error; }
+  await startEngine(text === undefined
+    ? { target: 'offscreen', type: 'START_LISTENING', requestId: request.id, settings }
+    : { target: 'offscreen', type: 'PARSE_TEXT', requestId: request.id, settings, text }, continuous, generation);
 }
 async function snapshot(readOnly = false): Promise<AppState> {
   const [session, settings, macros, log, commands, engineOpen, library] = await Promise.all([getSession(), getSettings(), getMacros(), getLog(), chrome.commands.getAll(), hasOffscreen(), getLibrary()]);
@@ -376,7 +587,7 @@ async function snapshot(readOnly = false): Promise<AppState> {
     canResume: recovery.kind === 'site-access' && recovery.actions.length > 0 && !!recovery.origin && await chrome.permissions.contains({ origins: [recovery.origin] }),
     canChooseTab: recovery.kind === 'missing-target' && recovery.actions[0]?.action === 'find_tab' && !!recovery.choiceKey,
   } : null;
-  return { recovery: recoveryView, voiceSetup: session.voiceSetup, localAiAvailable: LOCAL_AI_AVAILABLE, transcript: session.transcript, currentWindowId: activeTab?.windowId, activeTabTitle: activeTab?.title, progress: session.progress, routines: await getRoutines(), library, question: session.question, dictation: session.conversation.dictation, contextTargets: session.conversation.targets, activeSiteOrigin, settings, macros, log, hud: session.hud, pending: session.pending, shortcut: commands.find(c => c.name === 'toggle-listening')?.shortcut ?? '', engineOpen, listening: !!session.capture || (session.hud.phase === 'listening' && !!session.active), hasApiKey: !!(await getApiKey(settings)) };
+  return { decisionListening: !!session.capture?.decisionId, decisionReadback: session.decisionReadback?.decisionId === waitingDecision(session)?.id ? session.decisionReadback : undefined, recovery: recoveryView, voiceSetup: session.voiceSetup, localAiAvailable: LOCAL_AI_AVAILABLE, transcript: session.transcript, currentWindowId: activeTab?.windowId, activeTabTitle: activeTab?.title, progress: session.progress, routines: await getRoutines(), library, question: session.question, dictation: session.conversation.dictation, contextTargets: session.conversation.targets, activeSiteOrigin, settings, macros, log, hud: session.hud, pending: session.pending, shortcut: commands.find(c => c.name === 'toggle-listening')?.shortcut ?? '', engineOpen, listening: !!session.capture || (session.hud.phase === 'listening' && !!session.active), hasApiKey: !!(await getApiKey(settings)) };
 }
 async function cloud(message: Extract<Message, { type: 'PARSE_CLOUD' | 'TEST_AI_CONNECTION' }>): Promise<Reply> {
   const id = message.type === 'PARSE_CLOUD' ? message.requestId : 'connection-test';
@@ -411,6 +622,17 @@ async function cloud(message: Extract<Message, { type: 'PARSE_CLOUD' | 'TEST_AI_
 async function handle(message: Message): Promise<Reply> {
   if (message.target !== 'background') return { ok: false, error: 'Wrong destination' };
   switch (message.type) {
+    case 'LISTEN_DECISION': await listenDecision(message.decisionId); return { ok: true };
+    case 'READ_DECISION': return readDecision(message.decisionId, message.direction);
+    case 'DECISION_LISTENING_ERROR': await decisionListeningError(message.sessionId, message.decisionId, message.error); return { ok: true, handled: true };
+    case 'READBACK_FINISHED': await readbackFinished(message.readbackId, message.error); return { ok: true, handled: true };
+    case 'EXPORT_LIBRARY_BACKUP': return { ok: true, backupJson: await exportSavedLibrary() };
+    case 'PREVIEW_LIBRARY_BACKUP': return { ok: true, backupPreview: await previewSavedLibraryImport(message.json) };
+    case 'IMPORT_LIBRARY_BACKUP': {
+      const session = await getSession();
+      if (session.active || session.capture || session.pending || session.question) throw new Error('Finish the current command and stop listening before importing a library.');
+      return { ok: true, backupPreview: await importSavedLibrary(message.json) };
+    }
     case 'RESUME_COMMAND':
     case 'CHOOSE_RECOVERY_TAB': {
       const session = await getSession(); const recovery = session.recovery;
@@ -434,6 +656,7 @@ async function handle(message: Message): Promise<Reply> {
       return executePlan(recovery.actions, recovery.source, recovery.request, recovery.transcript, recovery.context, recovery.overrides);
     }
     case 'START_VOICE_SETUP': {
+      const generation = engineCancellation;
       const session = await getSession();
       if (session.active || session.capture || session.pending || session.question) throw new Error('Finish the current command or stop listening before the spoken practice.');
       const settings = await getSettings();
@@ -442,11 +665,7 @@ async function handle(message: Message): Promise<Reply> {
       await chrome.storage.local.set({ settings: { ...settings, voicePace: message.pace ?? settings.voicePace, setupVoicePassed: false } });
       await setSession({ voiceSetup: { id: request.id, status: 'running', stage: 'microphone', detail: 'Starting the microphone…' } });
       await hud({ phase: 'listening', text: 'Say “open a new tab”.' }, request.tabId);
-      try {
-        await ensureOffscreen();
-        const reply = await withTimeout(send({ target: 'offscreen', type: 'START_LISTENING', requestId: request.id, settings: { ...settings, voicePace: message.pace ?? settings.voicePace, aiEnabled: false, triggerPhrase: '', listeningMode: 'single' } }), 10_000, 'The voice engine did not respond. Try again.');
-        if (!reply.ok) throw new Error(reply.error);
-      } catch (error) { await stop(errorText(error), 'error'); throw error; }
+      await startEngine({ target: 'offscreen', type: 'START_LISTENING', requestId: request.id, settings: { ...settings, voicePace: message.pace ?? settings.voicePace, aiEnabled: false, triggerPhrase: '', listeningMode: 'single' } }, false, generation, true);
       break;
     }
     case 'CANCEL_VOICE_SETUP': {
@@ -475,7 +694,7 @@ async function handle(message: Message): Promise<Reply> {
     }
     case 'REFRESH_SITE_SUGGESTIONS': if (!(await getSettings()).learnTopSites) throw new Error('Enable Learn my sites first.'); await refreshSiteSuggestions(); break;
     case 'ANSWER_CLARIFICATION': return answer(message.questionId, message.answer);
-    case 'INTERRUPT_COMMAND': return interrupt(message.replacement, message.stopListening, message.sessionId);
+    case 'INTERRUPT_COMMAND': return interrupt(message.replacement, message.stopListening, message.sessionId, message.alternatives);
     case 'GET_READING_LIST': return { ok: true, readingList: await chrome.readingList.query({}) };
     case 'UPDATE_READING_ITEM':
       if (message.operation === 'open') await chrome.tabs.create({ url: message.url });
@@ -538,15 +757,58 @@ async function handle(message: Message): Promise<Reply> {
     case 'BEGIN_VOICE_COMMAND': {
       const session = await getSession();
       if (session.capture?.id !== message.sessionId) return { ok: true, handled: true };
-      if (session.question) return answer(session.question.id, message.text);
-      const intent = interruptIntent(message.text); if (intent) return interrupt(intent.replacement, intent.stopListening, message.sessionId);
+      if (session.capture.decisionId) {
+        const decision = waitingDecision(session);
+        await setSession({ capture: null }); await chrome.alarms.clear(CAPTURE_ALARM);
+        if (!decision || decision.id !== session.capture.decisionId || decision.kind !== session.capture.decisionKind) return { ok: true, handled: true };
+        if (Date.now() - decision.at > 5 * 60_000) await hud({ phase: decision.kind === 'review' ? 'review' : 'clarify', text: 'That question or review expired. Cancel it and try the command again.' }, decision.tabId);
+        checkedDecision(session, decision.id);
+      }
+      const immediate = interruptIntent(message.text);
+      if (immediate && !immediate.replacement) return interrupt(undefined, immediate.stopListening, session.capture.decisionId ? undefined : message.sessionId);
+      const readback = await decisionReadbackCommand(session, message.text, message.alternatives); if (readback) return readback;
+      if (session.question) {
+        const question = session.question;
+        const freeform = question.kind === 'text' || question.kind === 'name';
+        if (!freeform && isNegatedCommand(message.text)) {
+          await setSession({ transcript: message.text });
+          await hud({ phase: 'clarify', text: 'No option selected. Say the option you want, or cancel the command.' }, question.request.tabId);
+          return { ok: true, handled: true, needsClarification: true };
+        }
+        const conflict = speechDecisionConflict(message.text, message.alternatives ?? [], text => {
+          const reading = !freeform && readbackIntent(text); if (reading) return `read:${reading}`;
+          if (!freeform && isNegatedCommand(text)) return 'no-action';
+          const intent = interruptIntent(text); if (intent) return `interrupt:${JSON.stringify(intent)}`;
+          const choice = answerChoice(question, text);
+          return choice ? JSON.stringify([choice.id, choice.value]) : undefined;
+        });
+        if (conflict) {
+          await setSession({ transcript: message.text });
+          await hud({ phase: 'clarify', text: 'I heard different possible answers. Please repeat your answer, or choose below.' }, question.request.tabId);
+          return { ok: true, handled: true, needsClarification: true };
+        }
+        return answer(question.id, message.text);
+      }
+      const intent = interruptIntent(message.text); if (intent) return interrupt(intent.replacement, intent.stopListening, session.capture.decisionId ? undefined : message.sessionId, message.alternatives);
       if (session.pending) {
+        const conflict = speechDecisionConflict(message.text, message.alternatives ?? [], text => {
+          const reading = readbackIntent(text); if (reading) return `read:${reading}`;
+          if (isNegatedCommand(text)) return 'dismiss';
+          const approval = reviewIntent(text); if (approval !== undefined) return approval ? 'approve' : 'dismiss';
+          const alternativeIntent = interruptIntent(text); return alternativeIntent ? `interrupt:${JSON.stringify(alternativeIntent)}` : undefined;
+        });
+        if (conflict) {
+          await setSession({ transcript: message.text });
+          await hud({ phase: 'review', text: 'I heard conflicting review answers. Say “confirm command” to continue, or “cancel command”.' }, session.pending.request.tabId);
+          return { ok: true, handled: true, pendingReview: true };
+        }
         const approval = reviewIntent(message.text);
         if (approval !== undefined) await review(session.pending.request.id, approval);
         else return { ok: true, handled: true, pendingReview: true };
         return { ok: true, handled: true };
       }
       if (session.active) return { ok: false, error: 'A command is already running. Please wait.' };
+      const recovery = await recoverByCommand(message.text, message.alternatives); if (recovery) return recovery;
       const request = await newRequest(); await begin(request);
       await hud({ phase: 'thinking', text: 'Interpreting your command…' }, request.tabId);
       return { ok: true, request };
@@ -596,7 +858,7 @@ async function handle(message: Message): Promise<Reply> {
   }
   return { ok: true };
 }
-const engineTypes = new Set(['ENGINE_LISTENING', 'VOICE_TRANSCRIPT', 'ENGINE_STATUS', 'ENGINE_ERROR', 'EXECUTE_ACTIONS', 'PARSE_CLOUD', 'BEGIN_VOICE_COMMAND', 'CAPTURE_HEARTBEAT', 'CAPTURE_STATUS', 'DICTATION_TEXT']);
+const engineTypes = new Set(['READBACK_FINISHED', 'DECISION_LISTENING_ERROR', 'ENGINE_LISTENING', 'VOICE_TRANSCRIPT', 'ENGINE_STATUS', 'ENGINE_ERROR', 'EXECUTE_ACTIONS', 'PARSE_CLOUD', 'BEGIN_VOICE_COMMAND', 'CAPTURE_HEARTBEAT', 'CAPTURE_STATUS', 'DICTATION_TEXT']);
 chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (reply: Reply) => void): boolean => {
   const parsed = messageSchema.safeParse(raw);
   if (!parsed.success || parsed.data.target !== 'background' || sender.id !== chrome.runtime.id) return false;
@@ -604,6 +866,8 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (reply: Rep
   const trusted = message.type === 'INTERRUPT_COMMAND' ? [chrome.runtime.getURL(OFFSCREEN_PATH), chrome.runtime.getURL('src/popup/popup.html'), chrome.runtime.getURL('src/popup/sidepanel.html'), chrome.runtime.getURL('src/popup/onboarding.html')].includes(path ?? '') : engineTypes.has(message.type) ? path === chrome.runtime.getURL(OFFSCREEN_PATH)
     : [chrome.runtime.getURL('src/popup/popup.html'), chrome.runtime.getURL('src/popup/sidepanel.html'), chrome.runtime.getURL('src/popup/onboarding.html')].includes(path ?? '');
   if (!trusted) { respond({ ok: false, error: 'Untrusted message source' }); return false; }
+  const operationGeneration = engineCancellation;
+  const queuedStartup = ['LISTEN_DECISION', 'READ_DECISION', 'BEGIN_VOICE_COMMAND', 'START_VOICE_SETUP'].includes(message.type) || (message.type === 'RUN_TEXT' && !interruptIntent(message.text));
   if (message.type === 'CANCEL_VOICE_SETUP') {
     void (async () => {
       const session = await getSession();
@@ -620,7 +884,7 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, respond: (reply: Rep
     return true;
   }
   if (message.type === 'TOGGLE_LISTENING' || message.type === 'SLEEP_ENGINE' || (message.type === 'RUN_TEXT' && interruptIntent(message.text))) abortRunning();
-  const result = message.type === 'GET_STATE' && executing.size > 0 ? snapshot(true).then(state => ({ ok: true as const, state })) : message.type === 'PARSE_CLOUD' || message.type === 'TEST_AI_CONNECTION' ? cloud(message) : serialize(() => handle(message));
+  const result = message.type === 'GET_STATE' && executing.size > 0 ? snapshot(true).then(state => ({ ok: true as const, state })) : message.type === 'PARSE_CLOUD' || message.type === 'TEST_AI_CONNECTION' ? cloud(message) : serialize(() => queuedStartup && operationGeneration !== engineCancellation ? Promise.resolve({ ok: true as const, handled: true }) : handle(message));
   void result.then(respond, (error: unknown) => respond({ ok: false, error: errorText(error) }));
   return true;
 });
@@ -640,7 +904,10 @@ chrome.alarms.onAlarm.addListener(alarm => {
     const session = await getSession();
     if (alarm.name === CAPTURE_ALARM) {
       if (!session.capture) { await chrome.alarms.clear(CAPTURE_ALARM); return; }
-      if (Date.now() - session.capture.lastSeen > 60_000 || !(await hasOffscreen())) await stop('The microphone stopped responding. Press the shortcut to restart it.', 'error');
+      if (Date.now() - session.capture.lastSeen > 60_000 || !(await hasOffscreen())) {
+        if (session.capture.decisionId) await decisionListeningError(session.capture.id, session.capture.decisionId, 'The microphone stopped responding.');
+        else await stop('The microphone stopped responding. Press the shortcut to restart it.', 'error');
+      }
     } else if (alarm.name === WATCHDOG_ALARM) {
       if (!session.active) return;
       if (Date.now() - session.active.startedAt < MAX_COMMAND_MS) { await chrome.alarms.create(WATCHDOG_ALARM, { when: session.active.startedAt + MAX_COMMAND_MS }); return; }

@@ -1,3 +1,5 @@
+const setupTimeout = 'Microphone setup did not finish. Check Chrome’s microphone permission and your system audio device, then try again.';
+
 /** Request permission without leaving a stream open, including late permission answers. */
 export function allowMicrophone(signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -7,7 +9,7 @@ export function allowMicrophone(signal: AbortSignal): Promise<void> {
       if (error) reject(error); else resolve();
     };
     const cancel = (): void => finish(new DOMException('Microphone setup stopped.', 'AbortError'));
-    const timer = setTimeout(() => finish(new Error('Microphone permission was not answered. Try again when ready.')), 20_000);
+    const timer = setTimeout(() => finish(new Error(setupTimeout)), 20_000);
     signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) { cancel(); return; }
     if (!navigator.mediaDevices?.getUserMedia) { finish(new Error('Microphone access is unavailable. Open this guide in Chrome.')); return; }
     void navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { stream.getTracks().forEach(track => track.stop()); finish(); }).catch(finish);
@@ -24,7 +26,7 @@ export function checkMicrophone(signal: AbortSignal, onLevel: (level: number) =>
       if (error) reject(error); else resolve(heard);
     };
     const cancel = (): void => finish(new DOMException('Microphone check stopped.', 'AbortError'));
-    let timer = setTimeout(() => finish(new Error('Microphone permission was not answered. Try again when ready.')), 20_000);
+    let timer = setTimeout(() => finish(new Error(setupTimeout)), 20_000);
     signal.addEventListener('abort', cancel, { once: true }); if (signal.aborted) { cancel(); return; }
     if (!navigator.mediaDevices?.getUserMedia) { finish(new Error('Microphone access is unavailable. Open this guide in Chrome.')); return; }
     void navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(async captured => {

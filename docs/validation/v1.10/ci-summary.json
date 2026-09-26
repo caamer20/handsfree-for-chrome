@@ -1,0 +1,158 @@
+{
+  "version": "1.10.0",
+  "recordedAt": "2026-09-26T11:36:08.292526+00:00",
+  "verifiedCommit": "360aa5adfb9540e688048ac8bf77fde6835ae5ab",
+  "run": {
+    "id": 36238861524,
+    "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36238861524",
+    "conclusion": "success"
+  },
+  "jobs": [
+    {
+      "name": "verify",
+      "conclusion": "success",
+      "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36238861524/job/108395523980"
+    },
+    {
+      "name": "browser-platforms (windows-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36238861524/job/108395524066"
+    },
+    {
+      "name": "browser-platforms (macos-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36238861524/job/108395524096"
+    }
+  ],
+  "platforms": {
+    "linux": {
+      "platform": "linux x64",
+      "browser": "153.0.8010.12",
+      "browserSuite": {
+        "startTime": "2026-09-26T11:28:57.151Z",
+        "duration": 223281.09999999998,
+        "expected": 77,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "nativeAndEditorRegressions": [
+        {
+          "title": "keeps paged decision readback and cancellation usable in the native popup",
+          "passed": true
+        },
+        {
+          "title": "opens the native extension popup at Chrome\u2019s actual popup dimensions",
+          "passed": true
+        },
+        {
+          "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+          "passed": true
+        },
+        {
+          "title": "shows speech interpretation failure without performing a different action",
+          "passed": true
+        },
+        {
+          "title": "keeps nested paragraph text and nodes intact when a partial replacement cannot be joined safely",
+          "passed": true
+        }
+      ]
+    },
+    "macos": {
+      "platform": "darwin arm64",
+      "browser": "153.0.8010.12",
+      "browserSuite": {
+        "startTime": "2026-09-26T11:28:11.954Z",
+        "duration": 403927.417,
+        "expected": 77,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "nativeAndEditorRegressions": [
+        {
+          "title": "keeps paged decision readback and cancellation usable in the native popup",
+          "passed": true
+        },
+        {
+          "title": "opens the native extension popup at Chrome\u2019s actual popup dimensions",
+          "passed": true
+        },
+        {
+          "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+          "passed": true
+        },
+        {
+          "title": "shows speech interpretation failure without performing a different action",
+          "passed": true
+        },
+        {
+          "title": "keeps nested paragraph text and nodes intact when a partial replacement cannot be joined safely",
+          "passed": true
+        }
+      ]
+    },
+    "windows": {
+      "platform": "win32 x64",
+      "browser": "153.0.8010.12",
+      "browserSuite": {
+        "startTime": "2026-09-26T11:28:31.649Z",
+        "duration": 414410.01,
+        "expected": 77,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "nativeAndEditorRegressions": [
+        {
+          "title": "keeps paged decision readback and cancellation usable in the native popup",
+          "passed": true
+        },
+        {
+          "title": "opens the native extension popup at Chrome\u2019s actual popup dimensions",
+          "passed": true
+        },
+        {
+          "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+          "passed": true
+        },
+        {
+          "title": "shows speech interpretation failure without performing a different action",
+          "passed": true
+        },
+        {
+          "title": "keeps nested paragraph text and nodes intact when a partial replacement cannot be joined safely",
+          "passed": true
+        }
+      ]
+    }
+  },
+  "upgradeSuites": {
+    "1.7.0": {
+      "startTime": "2026-09-26T11:32:48.045Z",
+      "duration": 7484.248,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "1.8.0": {
+      "startTime": "2026-09-26T11:32:41.761Z",
+      "duration": 4486.794,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "1.9.0": {
+      "startTime": "2026-09-26T11:33:13.201Z",
+      "duration": 4669.371,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    }
+  },
+  "limits": "Disposable profiles and synthetic ASR. Not human speech accuracy, physical microphone, OS privacy UI, sleep/wake, or battery measurement."
+}

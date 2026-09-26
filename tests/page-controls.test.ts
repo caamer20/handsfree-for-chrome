@@ -49,9 +49,9 @@ it('dictates command-like text literally and stops when focus changes', async ()
   document.body.innerHTML = '<textarea></textarea><input aria-label="Other"><input type="password" aria-label="Password">';
   const field = document.querySelector('textarea')!; field.focus();
   const started = await controller.execute({ operation: 'dictate_start' }); expect(started.dictating).toBe(true);
-  expect(controller.dictate('close all tabs', started.token).ok).toBe(true); expect(field.value).toBe('close all tabs');
-  controller.dictate('new paragraph keep writing', started.token); expect(field.value).toContain('\n\n');
-  document.querySelector('input')!.focus(); expect(controller.dictate('must not leak', started.token)).toMatchObject({ ok: false, dictating: false }); expect(document.querySelector('input')!.value).toBe('');
+  expect((await controller.dictate('close all tabs', started.token)).ok).toBe(true); expect(field.value).toBe('close all tabs');
+  await controller.dictate('new paragraph keep writing', started.token); expect(field.value).toContain('\n\n');
+  document.querySelector('input')!.focus(); expect(await controller.dictate('must not leak', started.token)).toMatchObject({ ok: false, dictating: false }); expect(document.querySelector('input')!.value).toBe('');
   expect(await controller.execute({ operation: 'focus', query: 'Password' })).toMatchObject({ ok: false });
 });
 it('enters literal text in contenteditable and never interprets it as HTML', async () => {
@@ -173,4 +173,151 @@ it('probes field readiness without focusing, changing, or numbering the field', 
   expect(await controller.execute({ operation: 'field_ready', query: 'Search' })).toMatchObject({ ok: true, editable: true });
   expect(document.querySelector('input')!.value).toBe('keep'); expect(document.activeElement).not.toBe(document.querySelector('input')); expect(document.getElementById('handsfree-page-overlay')).toBeNull();
   document.body.insertAdjacentHTML('beforeend', '<input aria-label="Search">'); expect(await controller.execute({ operation: 'field_ready', query: 'Search' })).toMatchObject({ editable: false, text: expect.stringContaining('Several') });
+});
+
+it('spaces dictated text at the caret and replaces selected text without an extra leading space', async () => {
+  document.body.innerHTML = '<textarea>hello world</textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  const started = await controller.execute({ operation: 'dictate_start' });
+  field.setSelectionRange(0, field.value.length);
+  expect((await controller.dictate('replacement', started.token)).ok).toBe(true); expect(field.value).toBe('replacement');
+  field.setSelectionRange(0, 0); await controller.dictate('before', started.token); expect(field.value).toBe('before replacement');
+  field.setSelectionRange(6, 6); await controller.dictate('middle', started.token); expect(field.value).toBe('before middle replacement');
+  field.setSelectionRange(field.value.length, field.value.length); await controller.dictate('.', started.token); expect(field.value).toBe('before middle replacement.');
+});
+
+it('verifies each dictated chunk and does not run queued text after an editor rejects it', async () => {
+  document.body.innerHTML = '<textarea>original</textarea>'; const field = document.querySelector('textarea')!; field.focus(); field.setSelectionRange(8, 8);
+  const started = await controller.execute({ operation: 'dictate_start' });
+  field.addEventListener('input', () => { queueMicrotask(() => { field.value = 'original'; }); });
+  const [first, second] = await Promise.all([controller.dictate('rejected', started.token), controller.dictate('must not continue', started.token)]);
+  expect(first).toMatchObject({ ok: false, dictating: false, text: expect.stringContaining('rejected') }); expect(second.ok).toBe(false); expect(field.value).toBe('original');
+});
+
+it('serializes accepted dictation chunks and honors a stop before queued work starts', async () => {
+  document.body.innerHTML = '<textarea></textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  const started = await controller.execute({ operation: 'dictate_start' });
+  expect((await Promise.all([controller.dictate('one', started.token), controller.dictate('two', started.token)])).every(result => result.ok)).toBe(true); expect(field.value).toBe('one two');
+  const pending = controller.dictate('cancelled', started.token); controller.cancel(); expect((await pending).ok).toBe(false); expect(field.value).toBe('one two');
+});
+
+it('undoes only the last dictated insertion and restores the original text selection', async () => {
+  document.body.innerHTML = '<textarea>hello world</textarea>'; const field = document.querySelector('textarea')!; field.focus(); field.setSelectionRange(6, 11, 'backward');
+  const started = await controller.execute({ operation: 'dictate_start' });
+  await controller.dictate('Chrome', started.token); expect(field.value).toBe('hello Chrome');
+  expect(await controller.dictate('scratch that', started.token)).toMatchObject({ ok: true, text: 'Last dictation undone' });
+  expect(field.value).toBe('hello world'); expect([field.selectionStart, field.selectionEnd, field.selectionDirection]).toEqual([6, 11, 'backward']);
+  expect((await controller.dictate('undo last dictation', started.token)).ok).toBe(false); expect(field.value).toBe('hello world');
+});
+
+it('keeps manual text or caret changes intact when undoing dictation', async () => {
+  document.body.innerHTML = '<textarea></textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  const started = await controller.execute({ operation: 'dictate_start' });
+  await controller.dictate('spoken', started.token); field.setSelectionRange(0, 0);
+  expect((await controller.dictate('scratch that', started.token)).ok).toBe(false); expect(field.value).toBe('spoken');
+  const restarted = await controller.execute({ operation: 'dictate_start' });
+  field.setSelectionRange(6, 6); await controller.dictate('again', restarted.token); const value = field.value; expect(value).toBe('spoken again');
+  field.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  expect((await controller.dictate('scratch that', restarted.token)).ok).toBe(false); expect(field.value).toBe(value);
+});
+
+it('does not let an older dictation token or a new session undo text', async () => {
+  document.body.innerHTML = '<textarea></textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  const old = await controller.execute({ operation: 'dictate_start' }); await controller.dictate('keep', old.token);
+  const current = await controller.execute({ operation: 'dictate_start' });
+  expect((await controller.dictate('scratch that', current.token)).ok).toBe(false); expect(field.value).toBe('keep');
+  const newest = await controller.execute({ operation: 'dictate_start' });
+  expect((await controller.dictate('extra', old.token)).ok).toBe(false); expect(field.value).toBe('keep');
+  expect((await controller.dictate('new session', newest.token)).ok).toBe(true); expect(field.value).toBe('keep new session');
+});
+
+it('can dictate reserved phrases literally without line break conversion or undo', async () => {
+  document.body.innerHTML = '<textarea></textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  const started = await controller.execute({ operation: 'dictate_start' });
+  await controller.dictate('literal scratch that', started.token);
+  await controller.dictate('literal new paragraph', started.token);
+  await controller.dictate('literal stop dictation', started.token);
+  expect(field.value).toBe('scratch that new paragraph stop dictation');
+  await controller.dictate('undo last dictation', started.token); expect(field.value).toBe('scratch that new paragraph');
+});
+
+it('respects cancellation and editor rejection of dictation undo', async () => {
+  document.body.innerHTML = '<textarea>old</textarea>'; const field = document.querySelector('textarea')!; field.focus(); field.setSelectionRange(3, 3);
+  const started = await controller.execute({ operation: 'dictate_start' }); await controller.dictate('new', started.token);
+  field.addEventListener('beforeinput', event => { if ((event as InputEvent).inputType === 'historyUndo') event.preventDefault(); }, { once: true });
+  expect((await controller.dictate('scratch that', started.token)).ok).toBe(false); expect(field.value).toBe('old new');
+  const restarted = await controller.execute({ operation: 'dictate_start' });
+  await controller.dictate('again', restarted.token); const keep = field.value; expect(keep).toBe('old new again');
+  field.addEventListener('input', event => { if ((event as InputEvent).inputType === 'historyUndo') queueMicrotask(() => { field.value = keep; }); });
+  expect(await controller.dictate('scratch that', restarted.token)).toMatchObject({ ok: false, text: expect.stringContaining('rejected') }); expect(field.value).toBe(keep);
+});
+
+it('selects and replaces a unique literal phrase in the focused field without submitting', async () => {
+  document.body.innerHTML = '<form><textarea>Try (A+B) and keep the rest.</textarea><button>Send</button></form>';
+  const field = document.querySelector('textarea')!; field.focus(); const submit = vi.fn(); document.querySelector('form')!.addEventListener('submit', submit);
+  expect((await controller.execute({ operation: 'select_text', query: '(a+b)' })).ok).toBe(true); expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe('(A+B)');
+  expect((await controller.execute({ operation: 'replace_text', query: '(A+B)', text: '<literal>' })).ok).toBe(true); expect(field.value).toBe('Try <literal> and keep the rest.'); expect(submit).not.toHaveBeenCalled();
+  await controller.execute({ operation: 'cursor_start' }); expect([field.selectionStart, field.selectionEnd]).toEqual([0, 0]);
+  await controller.execute({ operation: 'cursor_end' }); expect([field.selectionStart, field.selectionEnd]).toEqual([field.value.length, field.value.length]);
+});
+
+it('refuses missing and ambiguous phrases, including overlapping matches, without changing text or selection', async () => {
+  document.body.innerHTML = '<textarea>banana hello HELLO</textarea>'; const field = document.querySelector('textarea')!; field.focus(); field.setSelectionRange(1, 2);
+  for (const query of ['ana', 'hello', 'missing']) {
+    expect((await controller.execute({ operation: 'replace_text', query, text: 'changed' })).ok).toBe(false);
+    expect(field.value).toBe('banana hello HELLO'); expect([field.selectionStart, field.selectionEnd]).toEqual([1, 2]);
+  }
+});
+
+it('selects text using original Unicode offsets and keeps unrelated editors untouched', async () => {
+  document.body.innerHTML = '<textarea>İstanbul café 🐈 done</textarea><textarea>café</textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  await controller.execute({ operation: 'replace_text', query: 'CAFÉ', text: 'coffee' }); expect(field.value).toBe('İstanbul coffee 🐈 done'); expect(document.querySelectorAll('textarea')[1]!.value).toBe('café');
+});
+
+it('edits across inline text nodes in contenteditable and preserves literal replacement text', async () => {
+  document.body.innerHTML = '<div contenteditable="true" aria-label="Notes">before <strong>bold</strong> after</div><p>Keep me</p>';
+  const field = document.querySelector<HTMLElement>('[contenteditable]')!; field.focus();
+  expect((await controller.execute({ operation: 'select_text', query: 'before bold' })).ok).toBe(true); expect(window.getSelection()!.toString()).toBe('before bold');
+  expect((await controller.execute({ operation: 'replace_text', query: 'bold after', text: '<img>' })).ok).toBe(true); expect(field.textContent).toBe('before <img>'); expect(field.querySelector('img')).toBeNull(); expect(document.querySelector('p')!.textContent).toBe('Keep me');
+});
+
+it('undoes dictation in plain contenteditable and retains surrounding text', async () => {
+  document.body.innerHTML = '<div contenteditable="true">hello world</div>'; const field = document.querySelector<HTMLElement>('[contenteditable]')!; field.focus();
+  await controller.execute({ operation: 'select_text', query: 'world' }); const started = await controller.execute({ operation: 'dictate_start' });
+  await controller.dictate('friend', started.token); expect(field.textContent).toBe('hello friend');
+  expect((await controller.dictate('scratch that', started.token)).ok).toBe(true); expect(field.textContent).toBe('hello world'); expect(window.getSelection()!.toString()).toBe('world');
+});
+
+it('refuses selection across noneditable content and fields without native text selection', async () => {
+  document.body.innerHTML = '<div contenteditable="true">before <span contenteditable="false">protected</span> after</div><input type="number" value="12"><input type="password" value="secret">';
+  const editor = document.querySelector<HTMLElement>('[contenteditable]')!; editor.focus();
+  expect((await controller.execute({ operation: 'replace_text', query: 'protected', text: 'changed' })).ok).toBe(false); expect(editor.textContent).toBe('before protected after');
+  for (const input of document.querySelectorAll('input')) { input.focus(); expect((await controller.execute({ operation: 'cursor_start' })).ok).toBe(false); }
+});
+
+it('verifies phrase replacement and honors cancelled input', async () => {
+  document.body.innerHTML = '<textarea>original phrase</textarea>'; const field = document.querySelector('textarea')!; field.focus();
+  field.addEventListener('beforeinput', event => event.preventDefault(), { once: true });
+  expect((await controller.execute({ operation: 'replace_text', query: 'original', text: 'new' })).ok).toBe(false); expect(field.value).toBe('original phrase');
+  field.addEventListener('input', () => queueMicrotask(() => { field.value = 'original phrase'; }));
+  expect(await controller.execute({ operation: 'replace_text', query: 'original', text: 'new' })).toMatchObject({ ok: false, text: expect.stringContaining('rejected') });
+});
+
+it('excludes disabled fieldset controls but permits controls in its first legend', async () => {
+  document.body.innerHTML = '<fieldset disabled><legend><button>Allowed</button><input aria-label="Legend field"></legend><button>Blocked</button><input aria-label="Blocked field"></fieldset>';
+  expect((await controller.execute({ operation: 'show_links' })).choices?.map(item => item.label)).toEqual(['Allowed']);
+  expect((await controller.execute({ operation: 'show_fields' })).choices?.map(item => item.label)).toEqual(['Legend field']);
+  expect((await controller.execute({ operation: 'activate', query: 'Blocked' })).ok).toBe(false);
+});
+
+it('revalidates a numbered button when its fieldset becomes disabled', async () => {
+  document.body.innerHTML = '<fieldset><button>Continue</button></fieldset>'; const click = vi.fn(); document.querySelector('button')!.addEventListener('click', click);
+  const numbered = await controller.execute({ operation: 'show_links' }); document.querySelector('fieldset')!.disabled = true;
+  expect((await controller.execute({ operation: 'activate', index: 1 }, numbered.token)).ok).toBe(false); expect(click).not.toHaveBeenCalled();
+});
+
+it('resolves accessible labels inside their shadow root and excludes inert shadow hosts', async () => {
+  document.body.innerHTML = '<span id="label">Wrong label</span><div id="host"></div>'; const host = document.querySelector<HTMLElement>('#host')!;
+  host.attachShadow({ mode: 'open' }).innerHTML = '<span id="label">Shadow action</span><button aria-labelledby="label">Action</button>';
+  expect((await controller.execute({ operation: 'show_links' })).choices?.map(item => item.label)).toEqual(['Shadow action']);
+  host.setAttribute('inert', ''); expect((await controller.execute({ operation: 'show_links' })).choices).toEqual([]);
 });

@@ -1,0 +1,112 @@
+import { test, expect, message, state } from './fixtures';
+
+test('reviews workspace replacement and recovers its previous saved version through Library', async ({ context, control, worker }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Workspace history fixture</title>Saved page' }));
+  const pages = [];
+  for (const name of ['one', 'two', 'three']) { const page = await context.newPage(); await page.goto(`https://handsfree.test/${name}`); pages.push(page); }
+  await pages[2]!.bringToFront();
+  await message(control, { target: 'background', type: 'RUN_TEXT', text: 'save this workspace as History research' });
+  await expect.poll(async () => { const current = await state(control); return [current.hud.phase, current.library?.workspaces[0]?.tabs.length]; }).toEqual(['success', 3]);
+  const original = (await state(control)).library!.workspaces[0]!;
+  await pages[2]!.close();
+  await control.bringToFront();
+  await control.getByRole('button', { name: 'Library', exact: true }).click();
+  await control.getByRole('button', { name: 'Workspaces', exact: true }).click();
+  await control.getByRole('button', { name: 'Update from this window', exact: true }).click();
+  await expect.poll(async () => (await state(control)).question?.prompt).toContain('(3 saved tabs) with these 2 tabs');
+  await expect(control.locator('#last-transcript')).toContainText('update History research workspace from this window');
+  await expect(control.locator('#last-transcript')).not.toContainText(original.id);
+  await expect(control.locator('#progress-steps')).toContainText('update workspace History research');
+  await expect(control.locator('#progress-steps')).not.toContainText(original.id);
+  expect((await state(control)).library!.workspaces[0]).toEqual(original);
+  await control.getByText('View proposed saved tabs', { exact: true }).click();
+  const proposal = control.locator('#question-choices details p');
+  await expect(proposal).toContainText('https://handsfree.test/one');
+  await expect(proposal).toContainText('https://handsfree.test/two');
+  await proposal.click();
+  expect((await state(control)).library!.workspaces[0]).toEqual(original);
+  expect((await state(control)).question).not.toBeNull();
+  await control.screenshot({ path: 'test-results/workspace-update-review.png', fullPage: true });
+  await control.locator('#question-choices button').first().click();
+  await expect.poll(async () => { const current = await state(control); return [current.hud.phase, current.library?.workspaces[0]?.tabs.length, current.library?.workspaces[0]?.previous?.tabs.length]; }).toEqual(['success', 2, 3]);
+  const beforeRecovery = (await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id);
+  await control.getByRole('button', { name: 'Library', exact: true }).click();
+  await control.getByRole('button', { name: 'Workspaces', exact: true }).click();
+  await control.getByRole('button', { name: 'Recover previous saved version', exact: true }).click();
+  await expect.poll(async () => (await state(control)).question?.prompt).toContain('(3 tabs), replacing the current 2 saved tabs');
+  await control.locator('#question-choices button').first().click();
+  await expect.poll(async () => { const current = await state(control); return [current.hud.phase, current.library?.workspaces[0]?.tabs.length, current.library?.workspaces[0]?.previous?.tabs.length]; }).toEqual(['success', 3, 2]);
+  const recovered = (await state(control)).library!.workspaces[0]!;
+  expect(recovered.id).toBe(original.id); expect(recovered.tabs).toEqual(original.tabs); expect(recovered.activeTabIndex).toBe(original.activeTabIndex);
+  expect((await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id)).toEqual(beforeRecovery);
+  expect(recovered.previous).not.toHaveProperty('previous');
+});
+
+test('rejects a workspace update if a source page changes after its review', async ({ context, control }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Workspace source fixture</title>Saved page' }));
+  const page = await context.newPage(); await page.goto('https://handsfree.test/original'); await page.bringToFront();
+  await message(control, { target: 'background', type: 'RUN_TEXT', text: 'save this workspace as Stable research' });
+  await expect.poll(async () => (await state(control)).hud.phase).toBe('success');
+  const original = (await state(control)).library!.workspaces[0]!;
+  await page.goto('https://handsfree.test/proposed');
+  await message(control, { target: 'background', type: 'RUN_TEXT', text: 'update Stable research workspace' });
+  await expect.poll(async () => (await state(control)).question?.kind).toBe('workspace');
+  const question = (await state(control)).question!;
+  await page.goto('https://handsfree.test/changed');
+  await message(control, { target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'first' });
+  await expect.poll(async () => (await state(control)).hud.text).toContain('source tabs changed');
+  expect((await state(control)).library!.workspaces[0]).toEqual(original);
+});
+
+test('renames through a Library name question and discards only reviewed previous history', async ({ context, control, worker }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Private workspace history</title>Saved page' }));
+  const current = await context.newPage(); await current.goto('https://handsfree.test/current');
+  const prior = await context.newPage(); await prior.goto('https://handsfree.test/private-previous'); await prior.bringToFront();
+  await message(control, { target: 'background', type: 'RUN_TEXT', text: 'save this workspace as Research' });
+  await expect.poll(async () => { const next = await state(control); return [next.hud.phase, next.library?.workspaces[0]?.tabs.length]; }).toEqual(['success', 2]);
+  await prior.close(); await control.bringToFront();
+  await message(control, { target: 'background', type: 'RUN_TEXT', text: 'update Research workspace' });
+  await expect.poll(async () => (await state(control)).question?.kind).toBe('workspace');
+  const update = (await state(control)).question!;
+  await message(control, { target: 'background', type: 'ANSWER_CLARIFICATION', questionId: update.id, answer: 'first' });
+  await expect.poll(async () => { const next = await state(control); return [next.hud.phase, next.library?.workspaces[0]?.previous?.tabs.length]; }).toEqual(['success', 2]);
+  const original = (await state(control)).library!.workspaces[0]!;
+  const tabIds = (await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id);
+
+  await control.getByRole('button', { name: 'Library', exact: true }).click();
+  await control.getByRole('button', { name: 'Workspaces', exact: true }).click();
+  await control.locator('#workspace-list').getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect.poll(async () => (await state(control)).question?.kind).toBe('name');
+  await control.locator('#command').fill('Physics then close all tabs'); await control.locator('#run-text').click();
+  await expect.poll(async () => { const next = await state(control); return [next.hud.phase, next.library?.workspaces[0]?.name]; }).toEqual(['success', 'Physics then close all tabs']);
+  const renamed = { ...original, name: 'Physics then close all tabs' };
+  expect((await state(control)).library!.workspaces[0]).toEqual(renamed);
+  expect((await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id)).toEqual(tabIds);
+
+  await control.getByRole('button', { name: 'Library', exact: true }).click();
+  await control.getByRole('button', { name: 'Workspaces', exact: true }).click();
+  await control.getByRole('button', { name: 'Discard previous saved version', exact: true }).click();
+  await expect.poll(async () => (await state(control)).question?.key).toContain('workspace:discard_previous:');
+  await control.getByText('View previous saved tabs', { exact: true }).click();
+  const details = control.locator('#question-choices details p');
+  await expect(details).toContainText('https://handsfree.test/private-previous'); await details.click();
+  expect((await state(control)).library!.workspaces[0]).toEqual(renamed);
+  expect((await state(control)).question).not.toBeNull();
+  await control.locator('#question-choices button').nth(1).click();
+  await expect.poll(async () => (await state(control)).question).toBeNull();
+  expect((await state(control)).library!.workspaces[0]).toEqual(renamed);
+
+  await control.getByRole('button', { name: 'Library', exact: true }).click();
+  await control.getByRole('button', { name: 'Workspaces', exact: true }).click();
+  await control.getByRole('button', { name: 'Discard previous saved version', exact: true }).click();
+  await expect.poll(async () => (await state(control)).question?.key).toContain('workspace:discard_previous:');
+  await control.locator('#question-choices button').first().click();
+  await expect.poll(async () => { const next = await state(control); return [next.hud.phase, !!next.library?.workspaces[0]?.previous]; }).toEqual(['success', false]);
+  const saved = { ...renamed }; delete saved.previous;
+  expect((await state(control)).library!.workspaces[0]).toEqual(saved);
+  expect((await worker.evaluate(() => chrome.tabs.query({}))).map(tab => tab.id)).toEqual(tabIds);
+  const exported = await message(control, { target: 'background', type: 'EXPORT_LIBRARY_BACKUP' });
+  if (!exported.ok || !exported.backupJson) throw new Error('Missing library backup');
+  expect(JSON.parse(exported.backupJson).workspaces).toEqual([saved]);
+  expect(exported.backupJson).not.toContain('https://handsfree.test/private-previous');
+});
