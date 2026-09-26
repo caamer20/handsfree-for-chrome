@@ -6,6 +6,7 @@ import { getLibrary, saveAlias, saveWorkspace } from './library-store';
 import { saveMacro } from './store';
 import { applyUndo, contextFor, contextTabs, markIrreversible, matchTabs, recordUndo, rememberTargets, resolveSite, resolveTabs, sites, type ExecutionEnvironment } from './execution';
 import { cancelPage, pageCommand } from './page-bridge';
+import { CommandFailure } from '../common/recovery';
 
 export interface FeatureResult { text: string; context: TargetContext; }
 const usable = (url?: string): url is string => !!url && isSafeUrl(url) && url !== 'chrome://newtab/';
@@ -89,7 +90,12 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
       };
       tabs.sort((a, b) => sortKey(a).localeCompare(sortKey(b), undefined, { sensitivity: 'base', numeric: true }) || a.index - b.index);
       // Move only ungrouped, unpinned tabs to the end, so existing groups stay together.
-      for (const tab of tabs) { checkCancelled(env.signal); await chrome.tabs.move(tab.id!, { index: -1 }); markIrreversible(env); }
+      for (const tab of tabs) {
+        checkCancelled(env.signal); await chrome.tabs.move(tab.id!, { index: -1 }); markIrreversible(env);
+        const current = await chrome.tabs.get(tab.id!); const remaining = await chrome.tabs.query({ windowId: context.windowId });
+        if (current.windowId !== context.windowId || current.index !== remaining.length - 1) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm a tab’s sorted position. Check the tabs before trying again; earlier moves remain in place.');
+        await env.onTarget?.(contextFor([current], context), `Moved ${tab.title ?? 'tab'} to position ${current.index + 1}`);
+      }
       return done(`Sorted ${tabs.length} ungrouped tabs by ${action.params.operation === 'sort_title' ? 'title' : 'site'} after existing groups. Pinned tabs kept first.`);
     }
     case 'open_site': {
@@ -214,15 +220,22 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
     case 'undo_action': return done(await applyUndo(env, action.params.kind));
     case 'move_beside': {
       const [anchor] = await resolveTabs(action.params.query, context, env); if (anchor?.id === undefined) throw new Error('The destination tab is unavailable.');
-      const moving = (await contextTabs(context)).filter(tab => tab.id !== anchor.id);
-      for (const tab of moving) {
+      const moving = (await contextTabs(context)).sort((a, b) => a.windowId - b.windowId || a.index - b.index);
+      if (moving.some(tab => tab.id === anchor.id)) throw new Error('The destination tab is also selected to move. Choose a destination outside the selected tabs.');
+      if (moving.some(tab => !!tab.pinned !== !!anchor.pinned)) throw new Error('All selected tabs and the destination need the same pin state before placing them next to each other.');
+      let cursor = anchor.id;
+      for (const source of moving) {
         checkCancelled(env.signal);
-        if (!!tab.pinned !== !!anchor.pinned) throw new Error('Both tabs need the same pin state before placing them next to each other.');
-        const before = { index: tab.index, windowId: tab.windowId }; const currentAnchor = await chrome.tabs.get(anchor.id);
+        const tab = await chrome.tabs.get(source.id!); const currentAnchor = await chrome.tabs.get(cursor);
+        if (!!tab.pinned !== !!currentAnchor.pinned) throw new Error('A tab’s pin state changed while moving the selection. The remaining tabs were kept in place.');
+        const before = { index: tab.index, windowId: tab.windowId };
         let index = currentAnchor.index + (action.params.side === 'before' ? 0 : 1);
         if (tab.windowId === currentAnchor.windowId && tab.index < index) index--;
         await chrome.tabs.move(tab.id!, { windowId: currentAnchor.windowId, index });
-        const after = await chrome.tabs.get(tab.id!); recordUndo(env, 'move', { tabId: tab.id!, before, after: { index: after.index, windowId: after.windowId } });
+        const after = await chrome.tabs.get(tab.id!);
+        if (after.windowId !== currentAnchor.windowId || after.index !== index) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the tab’s new position. Check the tabs before trying again; the move may have partly completed.');
+        recordUndo(env, 'move', { tabId: tab.id!, before, after: { index: after.index, windowId: after.windowId } });
+        if (action.params.side !== 'before') cursor = tab.id!;
       }
       const tabs = await Promise.all(moving.map(tab => chrome.tabs.get(tab.id!))); rememberTargets(env, tabs);
       return done(`Moved ${moving.length} tab${moving.length === 1 ? '' : 's'} next to ${anchor.title ?? action.params.query}`, contextFor(tabs, context));
@@ -231,7 +244,13 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
       if (action.params.operation === 'mute_others') {
         const keep = action.params.query && !/^(?:this|this tab|this meeting|it|that one)$/i.test(action.params.query) ? await resolveTabs(action.params.query.replace(/\s+tab$/, ''), context, env) : await contextTabs(context);
         const keepIds = new Set(keep.map(tab => tab.id)); const others = (await chrome.tabs.query({})).filter(tab => tab.id !== undefined && !keepIds.has(tab.id) && !tab.mutedInfo?.muted);
-        for (const tab of others) { checkCancelled(env.signal); await chrome.tabs.update(tab.id!, { muted: true }); recordUndo(env, 'mute', { tabId: tab.id!, before: { muted: false }, after: { muted: true } }); }
+        for (const tab of others) {
+          checkCancelled(env.signal); await chrome.tabs.update(tab.id!, { muted: true });
+          const current = await chrome.tabs.get(tab.id!);
+          if (!current.mutedInfo?.muted) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm that a tab was muted. Check the tabs before trying again; earlier mute changes remain in place.');
+          recordUndo(env, 'mute', { tabId: tab.id!, before: { muted: false }, after: { muted: true } });
+          await env.onTarget?.(contextFor([current], context), `Muted ${tab.title ?? 'tab'}`);
+        }
         rememberTargets(env, keep); return done(`Muted ${others.length} other tab${others.length === 1 ? '' : 's'}`, contextFor(keep, context));
       }
       const audible = (await chrome.tabs.query({ audible: true })).filter(tab => !tab.mutedInfo?.muted);
@@ -255,7 +274,7 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
         await cancelPage(env.state.dictation); env.state.dictation = null;
         return done('Dictation stopped');
       }
-      let preferred = env.state.page?.tabId === context.tabId && (p.index !== undefined || ['find_next', 'find_previous'].includes(p.operation) || env.overrides[key]) ? env.state.page : undefined;
+      let preferred = env.state.page?.tabId === context.tabId && (p.index !== undefined || ['find_next', 'find_previous', 'next_heading', 'previous_heading', 'next_landmark', 'previous_landmark'].includes(p.operation) || env.overrides[key]) ? env.state.page : undefined;
       const chosen = env.overrides[key]?.value;
       if (chosen && (p.operation === 'activate' || p.operation.startsWith('media_'))) {
         const selection = await pageCommand(context.tabId, { operation: 'activate', index: Number(chosen), ...(p.new_tab ? { new_tab: true } : {}) }, preferred, env.signal);
@@ -273,7 +292,7 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
       if (result.choices?.length && !['show_links', 'show_fields'].includes(p.operation)) throw new ChoiceRequired(result.text, result.choices.slice(0, 50).map(item => ({ id: String(item.id), label: item.label, value: String(item.id) })), 'page', key);
       if (result.url) { const tab = await chrome.tabs.create({ url: result.url, active: !p.background, windowId: context.windowId }); rememberTargets(env, [tab]); markIrreversible(env); return done(result.text, contextFor([tab], context)); }
       if (chosen) delete env.overrides[key];
-      if (['activate', 'type', 'fill', 'clear', 'delete_selection', 'select_option', 'check', 'uncheck', 'media_play', 'media_pause', 'media_toggle', 'media_seek', 'media_volume'].includes(p.operation)) markIrreversible(env);
+      if (['activate', 'type', 'fill', 'clear', 'delete_selection', 'replace_text', 'select_option', 'check', 'uncheck', 'media_play', 'media_pause', 'media_toggle', 'media_seek', 'media_volume'].includes(p.operation)) markIrreversible(env);
       return done(result.text);
     }
     case 'group_action': {
@@ -317,7 +336,16 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
         const tabs = context.tabIds ? await contextTabs(context) : await chrome.tabs.query({ windowId: context.windowId });
         const groups = await chrome.tabGroups.query({}); const saved = tabs.filter(tab => usable(tab.url));
         if (!saved.length) throw new Error('There are no web pages to save in this workspace.');
-        const workspace: Workspace = { id: crypto.randomUUID(), name, createdAt: Date.now(), tabs: saved.map(tab => { const group = groups.find(group => group.id === tab.groupId); return { url: tab.url!, title: (tab.title ?? '').slice(0, 300), pinned: tab.pinned, ...(group?.title ? { group: group.title, color: group.color } : {}) }; }) };
+        const savedGroups = groups.filter(group => saved.some(tab => !tab.pinned && tab.groupId === group.id));
+        const activeTabIndex = saved.findIndex(tab => tab.active && tab.windowId === context.windowId);
+        const workspace: Workspace = {
+          id: crypto.randomUUID(), name, createdAt: Date.now(), ...(activeTabIndex >= 0 ? { activeTabIndex } : {}),
+          groups: savedGroups.map(group => ({ id: `group-${group.id}`, title: (group.title ?? '').slice(0, 100), color: group.color, collapsed: group.collapsed })),
+          tabs: saved.map(tab => {
+            const group = savedGroups.find(group => group.id === tab.groupId);
+            return { url: tab.url!, title: (tab.title ?? '').slice(0, 300), pinned: tab.pinned, ...(group ? { groupId: `group-${group.id}`, group: (group.title ?? '').slice(0, 100), color: group.color } : {}) };
+          }),
+        };
         await saveWorkspace(workspace); env.library = await getLibrary(); markIrreversible(env); return done(`Saved ${saved.length} tabs as ${name}`);
       }
       const workspace = named(env.library.workspaces, action.params.name ?? '', 'workspace', env);
@@ -325,17 +353,52 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
       try {
         const first = workspace.tabs[0]!; const created = await chrome.windows.create({ url: first.url, focused: true });
         if (created?.id === undefined) throw new Error('Chrome could not create a workspace window.');
-        const firstTab = created.tabs?.[0] ?? (await chrome.tabs.query({ windowId: created.id }))[0]; if (!firstTab) throw new Error('Chrome did not return the first workspace tab.');
+        const firstTab = created.tabs?.[0] ?? (await chrome.tabs.query({ windowId: created.id }))[0]; if (firstTab?.id === undefined) throw new Error('Chrome did not identify the first workspace tab. Check the new window before trying again.');
         opened.push(firstTab); rememberTargets(env, opened);
-        for (const entry of workspace.tabs.slice(1)) { checkCancelled(env.signal); opened.push(await chrome.tabs.create({ url: entry.url, active: false, windowId: created.id })); rememberTargets(env, opened); }
-        for (let index = 0; index < opened.length; index++) { checkCancelled(env.signal); if (workspace.tabs[index]?.pinned) await chrome.tabs.update(opened[index]!.id!, { pinned: true }); }
-        for (const name of new Set(workspace.tabs.flatMap(entry => entry.group ? [entry.group] : []))) {
-          checkCancelled(env.signal); const indexes = workspace.tabs.flatMap((entry, index) => entry.group === name && !entry.pinned ? [index] : []); if (!indexes.length) continue;
-          const id = await chrome.tabs.group({ tabIds: indexes.map(index => opened[index]!.id!), createProperties: { windowId: created.id } });
-          await chrome.tabGroups.update(id, { title: name, color: workspace.tabs[indexes[0]!]!.color ?? 'grey' });
+        await env.onTarget?.(contextFor([firstTab], context), `Opened ${first.title || first.url}`);
+        for (const entry of workspace.tabs.slice(1)) {
+          checkCancelled(env.signal); const tab = await chrome.tabs.create({ url: entry.url, active: false, windowId: created.id });
+          if (tab.id === undefined) throw new Error('Chrome did not identify a workspace tab. Check the new window before trying again.');
+          opened.push(tab); rememberTargets(env, opened);
+          await env.onTarget?.(contextFor([tab], context), `Opened ${entry.title || entry.url}`);
         }
-        markIrreversible(env); return done(`Restored ${workspace.name} · ${opened.length} tabs`, contextFor(opened, context));
-      } catch (error) { markIrreversible(env); throw new Error(`Restored ${opened.length} of ${workspace.tabs.length} tabs. ${error instanceof Error ? error.message : 'Chrome stopped the restore.'}`); }
+        for (let index = 0; index < opened.length; index++) {
+          checkCancelled(env.signal); const entry = workspace.tabs[index]!; if (!entry.pinned) continue;
+          await chrome.tabs.update(opened[index]!.id!, { pinned: true });
+          const tab = await chrome.tabs.get(opened[index]!.id!);
+          if (!tab.pinned) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm a restored tab’s pin state.');
+          await env.onTarget?.(contextFor([tab], context), `Pinned ${entry.title || entry.url}`);
+        }
+        const grouping = (workspace.groups ?? []).map(group => ({ ...group, indexes: workspace.tabs.flatMap((entry, index) => entry.groupId === group.id ? [index] : []) }));
+        // Older workspaces identify groups by title. Preserve that behavior only
+        // for tabs without the newer group identity field.
+        for (const title of new Set(workspace.tabs.flatMap(entry => !entry.groupId && entry.group ? [entry.group] : []))) {
+          const indexes = workspace.tabs.flatMap((entry, index) => !entry.groupId && entry.group === title && !entry.pinned ? [index] : []);
+          if (indexes.length) grouping.push({ id: `legacy-${grouping.length}`, title, color: workspace.tabs[indexes[0]!]!.color ?? 'grey', collapsed: false, indexes });
+        }
+        for (const savedGroup of grouping) {
+          checkCancelled(env.signal); const { indexes, title, color, collapsed } = savedGroup;
+          const id = await chrome.tabs.group({ tabIds: indexes.map(index => opened[index]!.id!), createProperties: { windowId: created.id } });
+          const members = await Promise.all(indexes.map(index => chrome.tabs.get(opened[index]!.id!)));
+          if (members.some(tab => tab.groupId !== id)) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm a restored tab group.');
+          for (const [memberIndex, tab] of members.entries()) {
+            const entry = workspace.tabs[indexes[memberIndex]!]!;
+            await env.onTarget?.(contextFor([tab], context), `Grouped ${entry.title || entry.url}`);
+          }
+          checkCancelled(env.signal);
+          await chrome.tabGroups.update(id, { title, color, collapsed });
+          const group = await chrome.tabGroups.get(id);
+          if ((group.title ?? '') !== title || group.color !== color || group.collapsed !== collapsed) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the restored group’s name, color, and collapsed state.');
+          await env.onTarget?.(contextFor(members, context), `Restored group ${title || 'Untitled group'} · ${color}${collapsed ? ' · collapsed' : ''}`);
+        }
+        checkCancelled(env.signal);
+        const activeIndex = workspace.activeTabIndex ?? 0; const active = opened[activeIndex]!;
+        await chrome.tabs.update(active.id!, { active: true });
+        const restoredActive = await chrome.tabs.get(active.id!);
+        if (!restoredActive.active || restoredActive.windowId !== created.id) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the workspace’s active tab.');
+        await env.onTarget?.(contextFor([restoredActive], context), `Activated ${workspace.tabs[activeIndex]!.title || workspace.tabs[activeIndex]!.url}`);
+        markIrreversible(env); return done(`Restored ${workspace.name} · ${opened.length} tabs`, contextFor([restoredActive], context));
+      } catch (error) { markIrreversible(env); throw new Error(`Opened ${opened.length} of ${workspace.tabs.length} workspace tabs before restoration stopped. ${error instanceof Error ? error.message : 'Chrome could not finish the restore.'}`); }
     }
     case 'reading_action': {
       const p = action.params;

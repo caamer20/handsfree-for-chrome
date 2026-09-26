@@ -17,7 +17,7 @@ export async function prepareProgress(id: string, name: string, actions: ChromeA
       const tab = await chrome.tabs.get(event.context.tabId).catch(() => undefined);
       step.target = `${tab?.title || 'Tab ' + event.context.tabId}${event.context.tabIds && event.context.tabIds.length > 1 ? ` · ${event.context.tabIds.length} tabs` : ''}`.slice(0, 200);
     } else if (event.status === 'target') {
-      if (event.result && step.completedTargets.length < 50) step.completedTargets.push(event.result.slice(0, 250));
+      if (event.result) step.completedTargets.push(event.result.slice(0, 250));
     } else { step.status = 'completed'; step.result = event.result?.slice(0, 500); }
     if (next.steps.every(item => item.status === 'completed')) next.status = 'completed';
     await setSession({ progress: next });

@@ -10,12 +10,14 @@ import { DiagnosticsPanel } from './diagnostics';
 import { recoveryAdvice } from '../common/diagnostics';
 import { contextExamples } from '../common/suggestions';
 import { LibraryPanel } from './library';
+import { LibraryBackupPanel } from './library-backup';
 import { RoutinesPanel } from './routines';
 import { MacrosPanel } from './macros';
 
 let state: AppState | undefined;
 let initialized = false;
 let lastQuestionId: string | null = null;
+let choicesKey = '';
 let pendingRequest = false;
 let requestingSite = false;
 let testingConnection = false;
@@ -28,6 +30,7 @@ el('open-panel').hidden = isPanel;
 el('panel-stop').hidden = !isPanel;
 new DiagnosticsPanel('diagnostics', perform);
 const libraryPanel = new LibraryPanel(perform, () => showPane('control'));
+const libraryBackup = new LibraryBackupPanel(perform);
 const routinesPanel = new RoutinesPanel(perform, () => showPane('control'));
 const macrosPanel = new MacrosPanel(perform, () => showPane('control'));
 function showPane(name: string): void {
@@ -63,6 +66,7 @@ function render(next: AppState): void {
   const phase = next.hud.phase;
   const busy = next.listening || phase === 'listening' || phase === 'thinking';
   macrosPanel.render(next.macros, busy || pendingRequest || !!next.pending || !!next.question);
+  libraryBackup.render(busy || pendingRequest || !!next.pending || !!next.question);
   libraryPanel.render(next);
   routinesPanel.render(next.routines ?? [], busy || pendingRequest || !!next.pending || !!next.question);
   el('voice-card').className = `voice-card ${phase}${next.progress ? ' has-progress' : ''}`;
@@ -97,7 +101,7 @@ function render(next: AppState): void {
     if (step.completedTargets.length) { const confirmed = document.createElement('ul'); for (const target of step.completedTargets) { const item = document.createElement('li'); item.textContent = `Completed: ${target}`; confirmed.append(item); } row.append(confirmed); }
     steps.append(row);
   });
-  el('recovery-card').hidden = next.hud.phase !== 'error';
+  el('recovery-card').hidden = !next.recovery && next.hud.phase !== 'error';
   if (next.hud.phase === 'error') { const advice = recoveryAdvice(next.hud.text); el('recovery-title').textContent = advice.title; el('recovery-detail').textContent = advice.detail; const button = el<HTMLButtonElement>('recovery-action'); button.hidden = !advice.action; button.textContent = advice.action === 'sleep' ? 'Release engine' : advice.action === 'settings' ? 'Open settings' : 'Open setup guide'; }
   if (next.recovery) {
     const labels = { 'site-access': 'Allow this website to continue', 'restricted-page': 'Open a regular website', 'missing-target': 'Choose the intended tab', 'page-changed': 'The page changed', 'unknown-outcome': 'Check what changed before retrying' };
@@ -121,13 +125,19 @@ function render(next: AppState): void {
   el('clarification').hidden = !next.question;
   el('dictation-state').hidden = !next.dictation;
   el('question-prompt').textContent = next.question?.prompt ?? '';
-  const choices = el('question-choices'); choices.replaceChildren();
-  next.question?.choices.forEach((choice, index) => {
+  const nextChoicesKey = JSON.stringify([next.question?.id, next.question?.choices]);
+  const choices = el('question-choices');
+  if (choicesKey !== nextChoicesKey) {
+    choicesKey = nextChoicesKey; choices.replaceChildren();
+    const questionId = next.question?.id;
+    next.question?.choices.forEach((choice, index) => {
     const button = document.createElement('button'); button.className = 'command-example'; button.disabled = pendingRequest;
     const label = document.createElement('strong'); label.textContent = `${index + 1}. ${choice.label}`; button.append(label);
     if (choice.detail) { const detail = document.createElement('small'); detail.textContent = choice.detail; button.append(detail); }
-    button.addEventListener('click', () => { if (state?.question) void perform({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: state.question.id, answer: `choice:${choice.id}` }); }); choices.append(button);
-  });
+      button.addEventListener('click', () => { if (questionId && state?.question?.id === questionId) void perform({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId, answer: `choice:${choice.id}` }); }); choices.append(button);
+    });
+  }
+  choices.querySelectorAll('button').forEach(button => { button.disabled = pendingRequest; });
   el<HTMLButtonElement>('allow-site').disabled = !next.activeSiteOrigin;
   el('allow-site').textContent = next.activeSiteOrigin ? `Allow ${new URL(next.activeSiteOrigin).hostname}` : 'Open a website first';
   const activity = el('activity'); activity.replaceChildren();
@@ -151,6 +161,7 @@ function render(next: AppState): void {
     el<HTMLInputElement>('ai').checked = next.settings.aiEnabled;
     el<HTMLSelectElement>('listening-mode').value = next.settings.listeningMode;
     el<HTMLSelectElement>('voice-pace').value = next.settings.voicePace;
+    el<HTMLInputElement>('dictation-punctuation').checked = next.settings.dictationPunctuation;
     el<HTMLSelectElement>('ai-provider').value = next.settings.aiProvider;
     el<HTMLInputElement>('ai-model').value = next.settings.aiModel;
     el<HTMLInputElement>('ai-base-url').value = next.settings.aiBaseUrl;
@@ -247,7 +258,7 @@ el('settings-form').addEventListener('submit', event => {
     if (aiEnabled && config.aiProvider === 'local' && state.localAiAvailable === false) throw new Error('Choose an AI provider in Advanced settings, or leave AI off to use built-in commands.');
     if (aiEnabled || apiKey) validateProvider(config);
   } catch (error) { el<HTMLDetailsElement>('advanced-settings').open = true; showError(errorText(error)); return; }
-  const settings = { ...state.settings, ...config, voicePace: el<HTMLSelectElement>('voice-pace').value as AppState['settings']['voicePace'], reuseTabs: el<HTMLInputElement>('reuse-tabs').checked, learnTopSites: el<HTMLInputElement>('learn-sites').checked, feedback: el<HTMLSelectElement>('feedback').value as AppState['settings']['feedback'], siteDefaults: libraryPanel.defaults(), mode: el<HTMLSelectElement>('mode').value as AppState['settings']['mode'], language: el<HTMLSelectElement>('language').value as AppState['settings']['language'], listeningMode: el<HTMLSelectElement>('listening-mode').value as AppState['settings']['listeningMode'], triggerPhrase: el<HTMLInputElement>('trigger').value.trim(), aiEnabled: el<HTMLInputElement>('ai').checked, reviewAiActions: el<HTMLInputElement>('review-ai').checked, saveTranscripts: el<HTMLInputElement>('save-transcripts').checked };
+  const settings = { ...state.settings, ...config, dictationPunctuation: el<HTMLInputElement>('dictation-punctuation').checked, voicePace: el<HTMLSelectElement>('voice-pace').value as AppState['settings']['voicePace'], reuseTabs: el<HTMLInputElement>('reuse-tabs').checked, learnTopSites: el<HTMLInputElement>('learn-sites').checked, feedback: el<HTMLSelectElement>('feedback').value as AppState['settings']['feedback'], siteDefaults: libraryPanel.defaults(), mode: el<HTMLSelectElement>('mode').value as AppState['settings']['mode'], language: el<HTMLSelectElement>('language').value as AppState['settings']['language'], listeningMode: el<HTMLSelectElement>('listening-mode').value as AppState['settings']['listeningMode'], triggerPhrase: el<HTMLInputElement>('trigger').value.trim(), aiEnabled: el<HTMLInputElement>('ai').checked, reviewAiActions: el<HTMLInputElement>('review-ai').checked, saveTranscripts: el<HTMLInputElement>('save-transcripts').checked };
   // Request directly in the submit gesture, before any asynchronous work loses activation.
   const requested: chrome.permissions.Permissions = { ...((aiEnabled || apiKey) && config.aiProvider !== 'local' ? { origins: [providerOrigin(config)] } : {}), ...(settings.learnTopSites ? { permissions: ['topSites'] } : {}) };
   const permission = Object.keys(requested).length ? chrome.permissions.request(requested) : Promise.resolve(true);

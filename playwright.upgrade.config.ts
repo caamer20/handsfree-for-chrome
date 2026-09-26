@@ -1,2 +1,3 @@
 import config from './playwright.config';
-export default { ...config, testMatch: '**/*.upgrade.ts', timeout: 90_000, outputDir: 'test-results-upgrade', reporter: [['list'], ['json', { outputFile: 'test-results-upgrade/browser-results.json' }]] };
+const outputDir = `test-results-upgrade/${process.env.HANDSFREE_UPGRADE_VERSION ?? '1.8.0'}`;
+export default { ...config, testMatch: '**/*.upgrade.ts', timeout: 90_000, outputDir, reporter: [['list'], ['json', { outputFile: `${outputDir}/browser-results.json` }]] };

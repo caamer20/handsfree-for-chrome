@@ -6,6 +6,13 @@ export const MAX_COMMAND_MS = 2 * 60_000;
 export const MAX_LOG_ENTRIES = 30;
 export interface CommandExample { group: string; text: string; hint: string; variations?: readonly string[]; }
 export const COMMAND_EXAMPLES: readonly CommandExample[] = [
+  { group: 'Page structure', text: 'Show headings', hint: 'Choose a heading from the page outline without activating its links', variations: ['Next heading', 'Previous heading'] },
+  { group: 'Page structure', text: 'Go to the Pricing heading', hint: 'Scroll and focus a named heading; matching headings ask for a choice' },
+  { group: 'Page structure', text: 'Show page regions', hint: 'Choose a landmark such as main content or navigation', variations: ['Show landmarks', 'Next landmark', 'Previous landmark'] },
+  { group: 'Page structure', text: 'Go to main content', hint: 'Focus the main region of the current accessible page frame' },
+  { group: 'Form editing', text: 'Select text black holes', hint: 'Select one matching phrase inside the focused field; repeated phrases need more detail', variations: ['Highlight text black holes'] },
+  { group: 'Form editing', text: 'Replace text black holes with neutron stars', hint: 'Replace one matching phrase inside the focused field; the replacement stays literal' },
+  { group: 'Form editing', text: 'Move the cursor to the start', hint: 'Put the caret at the beginning of the focused field', variations: ['Move the cursor to the end', 'Put the caret at the end of this field'] },
   { group: 'Routines', text: 'Wait for the search field', hint: 'Wait up to 15 seconds for one matching editable field; then continue' },
   {"group": "Routines", "text": "Search Wikipedia", "hint": "Ask for search words, then continue · useful as a routine step"},
   {"group": "Routines", "text": "Wait for the page to load", "hint": "Wait up to 15 seconds before the next command; stop if loading takes longer"},

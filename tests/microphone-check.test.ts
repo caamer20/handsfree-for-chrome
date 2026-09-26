@@ -21,8 +21,8 @@ it('cancels an unanswered permission request and stops any stream that arrives l
   const controller = new AbortController(); const result = checkMicrophone(controller.signal, vi.fn()); const failed = expect(result).rejects.toThrow('stopped');
   controller.abort(); await failed; allow(stream); await Promise.resolve(); expect(stop).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
 });
-it('times out ignored permission prompts and cleans up when permission is denied', async () => {
-  capture.mockImplementationOnce(() => new Promise(() => undefined)); const timed = expect(checkMicrophone(new AbortController().signal, vi.fn())).rejects.toThrow('not answered'); await vi.advanceTimersByTimeAsync(20_001); await timed;
+it('times out stalled microphone setup and cleans up when permission is denied', async () => {
+  capture.mockImplementationOnce(() => new Promise(() => undefined)); const timed = expect(checkMicrophone(new AbortController().signal, vi.fn())).rejects.toThrow('Microphone setup did not finish'); await vi.advanceTimersByTimeAsync(20_001); await timed;
   capture.mockRejectedValueOnce(new DOMException('Denied', 'NotAllowedError')); await expect(checkMicrophone(new AbortController().signal, vi.fn())).rejects.toThrow('Denied'); expect(vi.getTimerCount()).toBe(0);
 });
 it('releases the permission-only stream immediately without creating an audio processor', async () => {
@@ -34,5 +34,12 @@ it('cleans up a permission-only stream that arrives after the page was closed', 
   capture.mockImplementation(() => new Promise(resolve => { allow = resolve; }));
   const controller = new AbortController(); const result = expect(allowMicrophone(controller.signal)).rejects.toThrow('stopped');
   controller.abort(); await result; allow(stream); await Promise.resolve();
+  expect(stop).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+});
+it('does not assume a pending permission-only request is waiting for consent and releases a late stream', async () => {
+  let allow: (value: MediaStream) => void = () => undefined;
+  capture.mockImplementation(() => new Promise(resolve => { allow = resolve; }));
+  const result = expect(allowMicrophone(new AbortController().signal)).rejects.toThrow('Check Chrome’s microphone permission and your system audio device');
+  await vi.advanceTimersByTimeAsync(20_001); await result; allow(stream); await Promise.resolve();
   expect(stop).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
 });

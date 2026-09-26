@@ -3,7 +3,7 @@ import { bestMatch } from './fuzzy';
 import { literalTabMatch, resolveTab } from './tab-matching';
 import { ChoiceRequired, ReviewRequired, checkCancelled, tabRef } from '../common/conversation';
 import { executeFeature } from './features';
-import { contextFor, contextTabs, markIrreversible, recordUndo, rememberTargets, resolveTabs, undoSnapshot, type ExecutionEnvironment } from './execution';
+import { contextAfterClose, contextFor, contextTabs, markIrreversible, recordUndo, rememberTargets, resolveTabs, undoSnapshot, type ExecutionEnvironment } from './execution';
 import { macroSchema, type Macro } from '../common/macros';
 import { CommandFailure } from '../common/recovery';
 
@@ -40,6 +40,44 @@ async function verifyTab(tabId: number, expected: { active?: boolean; pinned?: b
   checkCancelled(signal);
   if (!actual || (expected.active !== undefined && actual.active !== expected.active) || (expected.pinned !== undefined && actual.pinned !== expected.pinned) || (expected.muted !== undefined && !!actual.mutedInfo?.muted !== expected.muted) || (expected.index !== undefined && actual.index !== expected.index)) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the requested tab change. Check the tab before trying again; the action may have partly completed.');
 }
+interface BatchMove { tabId: number; windowId: number; from: number; to: number; }
+interface BatchMovePlan { moves: BatchMove[]; windows: Map<number, { id: number; pinned: boolean }[]>; }
+async function planBatchMoves(action: Extract<ChromeAction, { action: 'move_tab' }>, ids: number[]): Promise<BatchMovePlan> {
+  const selected = await Promise.all([...new Set(ids)].map(id => chrome.tabs.get(id)));
+  const plan: BatchMovePlan = { moves: [], windows: new Map() };
+  for (const windowId of [...new Set(selected.map(tab => tab.windowId))]) {
+    const tabs = (await chrome.tabs.query({ windowId })).sort((a, b) => a.index - b.index);
+    const selectedIds = new Set(selected.filter(tab => tab.windowId === windowId).map(tab => tab.id));
+    if (tabs.filter(tab => selectedIds.has(tab.id)).length !== selectedIds.size) throw new Error('A selected tab changed windows. Ask to move the selection again.');
+    plan.windows.set(windowId, tabs.map(tab => ({ id: tab.id!, pinned: !!tab.pinned })));
+    const pinnedCount = tabs.filter(tab => tab.pinned).length;
+    for (const pinned of [true, false]) {
+      const targets = tabs.filter(tab => selectedIds.has(tab.id) && !!tab.pinned === pinned);
+      if (!targets.length) continue;
+      const min = pinned ? 0 : pinnedCount; const max = pinned ? pinnedCount - 1 : tabs.length - 1;
+      const position = action.params.position; const destinations = new Map<number, number>();
+      if (position === 'left' || position === 'right') {
+        const right = position === 'right'; let boundary = right ? max : min;
+        for (const tab of right ? [...targets].reverse() : targets) {
+          const requested = tab.index + (right ? 1 : -1) * (action.params.steps ?? 1);
+          const to = right ? Math.min(requested, boundary) : Math.max(requested, boundary);
+          destinations.set(tab.id!, to); boundary = to + (right ? -1 : 1);
+        }
+      } else {
+        const start = position === 'first' ? min : position === 'last' ? max - targets.length + 1 : (action.params.index ?? 1) - 1;
+        if (start < min || start + targets.length - 1 > max) throw new Error(`These ${targets.length} selected tabs need consecutive positions ${min + 1}–${max + 1}. Choose a starting position where they fit, keeping pinned tabs first.`);
+        targets.forEach((tab, index) => destinations.set(tab.id!, start + index));
+      }
+      const moves = targets.map(tab => ({ tabId: tab.id!, windowId, from: tab.index, to: destinations.get(tab.id!)! }));
+      plan.moves.push(...moves.filter(move => move.to < move.from), ...moves.filter(move => move.to > move.from).reverse(), ...moves.filter(move => move.to === move.from));
+    }
+  }
+  return plan;
+}
+async function verifyBatchWindow(plan: BatchMovePlan, windowId: number): Promise<void> {
+  const current = (await chrome.tabs.query({ windowId })).sort((a, b) => a.index - b.index).map(tab => ({ id: tab.id!, pinned: !!tab.pinned }));
+  if (JSON.stringify(current) !== JSON.stringify(plan.windows.get(windowId))) throw new Error('The tabs changed while moving this selection. The remaining moves were stopped to keep the latest arrangement.');
+}
 export async function dispatchActions(input: unknown, initial: DispatchContext, env?: ExecutionEnvironment): Promise<DispatchResult> {
   const actions = actionsSchema.parse(input);
   let context = { ...initial }; const messages: string[] = [];
@@ -48,6 +86,7 @@ export async function dispatchActions(input: unknown, initial: DispatchContext, 
   for (let index = 0; index < actions.length; index++) {
     const action = actions[index]!;
     try {
+      if (env) env.onTarget = async (target, result) => { await env.onProgress?.({ index, status: 'target', context: target, result }); };
       checkCancelled(env?.signal);
       await env?.onProgress?.({ index, status: 'running', context });
       checkCancelled(env?.signal);
@@ -57,32 +96,48 @@ export async function dispatchActions(input: unknown, initial: DispatchContext, 
         const tabs = await contextTabs(context);
         if (!env.reviewed) throw new ReviewRequired(`Close these ${tabs.length} tabs?`, tabs.map(tabRef), 'close');
         rememberTargets(env, tabs); checkCancelled(env.signal); await chrome.tabs.remove(ids); markIrreversible(env);
-        messages.push(`Closed ${ids.length} tabs`); await env.onProgress?.({ index, status: 'completed', context, result: `Closed ${ids.length} tabs` }); continue;
+        messages.push(`Closed ${ids.length} tabs`); await env.onProgress?.({ index, status: 'completed', context, result: `Closed ${ids.length} tabs` });
+        const next = await contextAfterClose(context, ids);
+        if (next) { context = next; rememberTargets(env, await contextTabs(next)); }
+        else {
+          env.state.targets = [];
+          if (index + 1 < actions.length) throw new Error('The selected window has no remaining tab. The remaining steps were stopped.');
+        }
+        continue;
       }
       const multiple = ids.length > 1 && ['mute_tab', 'pin_tab', 'zoom', 'move_tab', 'reload_tab', 'duplicate_tab', 'bookmark_page'].includes(action.action);
-      const targets = multiple ? ids : [context.tabId]; const results: DispatchResult[] = [];
+      const batch = multiple && action.action === 'move_tab' ? await planBatchMoves(action, ids) : undefined;
+      const targets = batch ? batch.moves.map(move => move.tabId) : multiple ? ids : [context.tabId]; const results: DispatchResult[] = [];
       for (const id of targets) {
         checkCancelled(env?.signal);
+        const movement = batch?.moves.find(move => move.tabId === id);
+        if (batch && movement) await verifyBatchWindow(batch, movement.windowId);
         const singleContext = multiple ? { tabId: id, windowId: (await chrome.tabs.get(id)).windowId } : context;
         const before = env ? await undoSnapshot(action, id) : null;
         if (env && action.action === 'close_tab') rememberTargets(env, await contextTabs(singleContext));
-        const result = await dispatchOne(action, singleContext, env);
+        const result = await dispatchOne(movement ? { action: 'move_tab', params: { position: 'index', index: movement.to + 1 } } : action, singleContext, env);
         results.push(result);
-        if (multiple) { const title = (await chrome.tabs.get(id).catch(() => undefined))?.title ?? `Tab ${id}`; await env?.onProgress?.({ index, status: 'target', context: singleContext, result: `${title}: ${result.text}` }); }
+        if (batch && movement) {
+          const expected = batch.windows.get(movement.windowId)!; const from = expected.findIndex(tab => tab.id === id);
+          const [moved] = expected.splice(from, 1); expected.splice(movement.to, 0, moved!);
+          await verifyBatchWindow(batch, movement.windowId);
+        }
         if (env && before) {
           const after = await undoSnapshot(action, id);
           if (after) recordUndo(env, action.action === 'mute_tab' ? 'mute' : action.action === 'pin_tab' ? 'pin' : action.action === 'zoom' ? 'zoom' : 'move', { tabId: id, before, after });
         } else if (env && ['create_tab', 'close_tab', 'duplicate_tab', 'reload_tab', 'bookmark_page', 'open_bookmark', 'navigate_history', 'window_state', 'reopen_tab', 'create_window'].includes(action.action)) markIrreversible(env);
+        if (multiple) { const title = (await chrome.tabs.get(id).catch(() => undefined))?.title ?? `Tab ${id}`; await env?.onProgress?.({ index, status: 'target', context: singleContext, result: `${title}: ${result.text}` }); }
       }
+      if (batch) for (const windowId of batch.windows.keys()) { checkCancelled(env?.signal); await verifyBatchWindow(batch, windowId); }
       const result = results[results.length - 1]!;
-      context = multiple ? contextFor(await Promise.all(results.map(result => chrome.tabs.get(result.context.tabId))), context) : result.context;
-      if (env && action.action !== 'close_tab' && !['undo_action', 'audio_action', 'duplicates_action'].includes(action.action)) {
+      if (!batch) context = multiple ? contextFor(await Promise.all(results.map(result => chrome.tabs.get(result.context.tabId))), context) : result.context;
+      if (env && action.action !== 'close_tab' && !(action.action === 'workspace_action' && action.params.operation === 'restore') && !['undo_action', 'audio_action', 'duplicates_action'].includes(action.action)) {
         const tabs = await Promise.all((context.tabIds ?? [context.tabId]).map(id => chrome.tabs.get(id).catch(() => undefined)));
         rememberTargets(env, tabs.filter((tab): tab is chrome.tabs.Tab => !!tab));
       }
       if (env && ['create_tab', 'open_site', 'search_site'].includes(action.action)) { const tab = await chrome.tabs.get(context.tabId); if (tab.id !== undefined) opened.set(tab.id, tab); }
       else if (action.action !== 'reference_tabs') opened.clear();
-      messages.push(multiple ? `${result.text} · ${targets.length} tabs` : result.text);
+      messages.push(batch ? batch.moves.some(move => move.from !== move.to) ? `Moved ${targets.length} selected tabs` : 'Selected tabs are already in the requested positions' : multiple ? `${result.text} · ${targets.length} tabs` : result.text);
       await env?.onProgress?.({ index, status: 'completed', context, result: messages[messages.length - 1] });
     } catch (error) {
       if (error instanceof ChoiceRequired) { error.remaining = actions.slice(index); error.context = context; throw error; }

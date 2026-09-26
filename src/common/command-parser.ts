@@ -1,4 +1,5 @@
-import { formLiteral, incompleteSearch, productivityCommand } from './productivity-parser';
+import { editingLiteral, isEditingLiteral, formLiteral, incompleteSearch, productivityCommand } from './productivity-parser';
+import { isNavigationCommand } from './navigation-parser';
 import { actionsSchema, type ChromeAction } from './schema';
 import { expandedCommand, expandedSearch } from './expanded-parser';
 import { canonicalCommand, isNegatedCommand } from './language';
@@ -30,6 +31,8 @@ export function parseCommand(input: string): ChromeAction[] | null {
   if (!c || c.length > 500) return null;
   let m: RegExpMatchArray | null;
 
+  const editing = editingLiteral(raw);
+  if (isEditingLiteral(raw)) { const result = actionsSchema.safeParse(editing); return result.success ? result.data : null; }
   const form = formLiteral(raw); if (form) return actionsSchema.parse(form);
   const incomplete = incompleteSearch(raw); if (incomplete) return actionsSchema.parse(incomplete);
   const literal = literalCommand(raw); if (literal) return actionsSchema.parse(literal);
@@ -54,6 +57,7 @@ export function parseCommand(input: string): ChromeAction[] | null {
     return parsed.every(part => part !== null) ? actionsSchema.parse(parsed.flat()) : null;
   }
   const productivity = productivityCommand(raw); if (productivity) return actionsSchema.parse(productivity);
+  if (isNavigationCommand(raw)) return null;
   const natural = naturalCommand(raw, parseCommand); if (natural) return actionsSchema.parse(natural);
   const expanded = expandedCommand(raw);
   if (expanded) return actionsSchema.parse(expanded);

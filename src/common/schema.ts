@@ -36,6 +36,12 @@ export const actionsSchema = z.array(actionSchema).min(1).max(8).superRefine((ac
       const require = (condition: boolean, message: string): void => { if (!condition) ctx.addIssue({ code: 'custom', message, path: [index, 'params'] }); };
       if (p.operation === 'field_ready') require(false, 'Field readiness is used internally by wait_for_field');
       if (p.operation === 'find') require(!!p.query, 'Find needs search text');
+      if (p.operation === 'go_heading' || p.operation === 'go_landmark') require(!!p.query || p.index !== undefined, 'Choose a heading or page region by name or number');
+      if (p.operation === 'select_text' || p.operation === 'replace_text') {
+        require(!!p.query, 'Choose the text to edit');
+        require(p.index === undefined, 'Text editing uses the focused field, not a numbered target');
+      }
+      if (p.operation === 'replace_text') require(p.text !== undefined, 'Choose replacement text');
       if (p.operation === 'activate') require(!!p.query || p.index !== undefined, 'Click needs a label or number');
       if (p.operation === 'type' || p.operation === 'fill' || p.operation === 'select_option') require(p.text !== undefined, 'Typing needs text');
       if (p.operation === 'media_seek' || p.operation === 'media_volume') require(p.value !== undefined, 'Media adjustment needs a value');
@@ -68,6 +74,7 @@ export const settingsSchema = z.object({
   reviewAiActions: z.boolean().default(false),
   listeningMode: z.enum(['continuous', 'single']).default('continuous'),
   voicePace: z.enum(['natural', 'relaxed']).default('natural'),
+  dictationPunctuation: z.boolean().default(false),
   reuseTabs: z.boolean().default(true),
   learnTopSites: z.boolean().default(false),
   feedback: z.enum(['none', 'sound', 'speech']).default('none'),
@@ -87,6 +94,9 @@ export const hudSchema = z.object({
 export type HudState = z.infer<typeof hudSchema>;
 
 export const messageSchema = z.discriminatedUnion('type', [
+  z.object({ target: z.literal('background'), type: z.literal('EXPORT_LIBRARY_BACKUP') }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('PREVIEW_LIBRARY_BACKUP'), json: z.string().min(1).max(5 * 1024 * 1024) }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('IMPORT_LIBRARY_BACKUP'), json: z.string().min(1).max(5 * 1024 * 1024) }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('RESUME_COMMAND'), id: z.string().uuid() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('CHOOSE_RECOVERY_TAB'), id: z.string().uuid() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('START_VOICE_SETUP'), pace: z.enum(['natural', 'relaxed']).optional() }).strict(),
@@ -105,7 +115,7 @@ export const messageSchema = z.discriminatedUnion('type', [
   z.object({ target: z.literal('background'), type: z.literal('RESTORE_WORKSPACE'), id: z.string().uuid() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('REFRESH_SITE_SUGGESTIONS') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('ANSWER_CLARIFICATION'), questionId: z.string().uuid(), answer: text }).strict(),
-  z.object({ target: z.literal('background'), type: z.literal('INTERRUPT_COMMAND'), sessionId: z.string().uuid().optional(), replacement: text.optional(), stopListening: z.boolean().default(false) }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('INTERRUPT_COMMAND'), sessionId: z.string().uuid().optional(), replacement: text.optional(), stopListening: z.boolean().default(false), alternatives: z.array(text).max(3).optional() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('DICTATION_TEXT'), sessionId: z.string().uuid(), text: z.string().min(1).max(2000) }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('GET_READING_LIST') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('UPDATE_READING_ITEM'), url: z.string().max(4000).refine(isSafeUrl), operation: z.enum(['open', 'read', 'unread', 'remove']) }).strict(),
@@ -122,7 +132,7 @@ export const messageSchema = z.discriminatedUnion('type', [
   z.object({ target: z.literal('background'), type: z.literal('REMOVE_API_KEY') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('TEST_AI_CONNECTION') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('PARSE_CLOUD'), requestId: z.string().uuid(), text }).strict(),
-  z.object({ target: z.literal('background'), type: z.literal('BEGIN_VOICE_COMMAND'), sessionId: z.string().uuid(), text }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('BEGIN_VOICE_COMMAND'), sessionId: z.string().uuid(), text, alternatives: z.array(text).max(3).optional() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('CAPTURE_HEARTBEAT'), sessionId: z.string().uuid() }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('CAPTURE_STATUS'), sessionId: z.string().uuid(), text, fatal: z.boolean().default(false) }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('SAVE_MACRO'), macro: macroSchema }).strict(),

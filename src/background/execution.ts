@@ -7,7 +7,7 @@ import { fuzzyScore } from './fuzzy';
 import type { Macro } from '../common/macros';
 import { CommandFailure } from '../common/recovery';
 
-export interface ExecutionEnvironment { settings: Settings; library: Library; macros: Macro[]; state: Conversation; overrides: ChoiceOverrides; operationId: string; transcript: string; signal?: AbortSignal; reviewed?: boolean; onProgress?: (event: ProgressEvent) => Promise<void>; }
+export interface ExecutionEnvironment { settings: Settings; library: Library; macros: Macro[]; state: Conversation; overrides: ChoiceOverrides; operationId: string; transcript: string; signal?: AbortSignal; reviewed?: boolean; onProgress?: (event: ProgressEvent) => Promise<void>; onTarget?: (context: TargetContext, result: string) => Promise<void>; }
 export function sites(env: ExecutionEnvironment): Site[] { return [...BUILTIN_SITES, ...env.library.aliases.map(aliasAsSite)]; }
 export function resolveSite(name: string, env: ExecutionEnvironment): Site {
   const all = sites(env); const normalized = normalizeName(name).replace(/^(?:my|the) /, '');
@@ -65,9 +65,19 @@ export function contextFor(tabs: chrome.tabs.Tab[], fallback: TargetContext): Ta
   const first = tabs[0]; if (first?.id === undefined) return fallback;
   return { tabId: first.id, windowId: first.windowId, ...(tabs.length > 1 ? { tabIds: tabs.flatMap(tab => tab.id === undefined ? [] : [tab.id]) } : {}) };
 }
+/** Keep a surviving selection, otherwise continue on this window's active tab. */
+export async function contextAfterClose(prior: TargetContext, closedIds: number[]): Promise<TargetContext | undefined> {
+  const closed = new Set(closedIds);
+  const survivors = await Promise.all((prior.tabIds ?? [prior.tabId]).filter(id => !closed.has(id)).map(id => chrome.tabs.get(id).catch(() => undefined)));
+  const tabs = survivors.filter((tab): tab is chrome.tabs.Tab => !!tab && tab.windowId === prior.windowId);
+  if (tabs.length) return contextFor(tabs, prior);
+  const [active] = await chrome.tabs.query({ windowId: prior.windowId, active: true }).catch(() => [] as chrome.tabs.Tab[]);
+  return active?.id === undefined ? undefined : contextFor([active], prior);
+}
 export function markIrreversible(env: ExecutionEnvironment): void { env.state.lastUndoId = null; }
 export async function undoSnapshot(action: ChromeAction, tabId: number): Promise<UndoValues | null> {
-  if (!['mute_tab', 'pin_tab', 'move_tab', 'move_beside', 'zoom'].includes(action.action)) return null;
+  // move_beside records each move itself, including every tab in a batch.
+  if (!['mute_tab', 'pin_tab', 'move_tab', 'zoom'].includes(action.action)) return null;
   if (action.action === 'zoom') return { zoom: await chrome.tabs.getZoom(tabId) };
   const tab = await chrome.tabs.get(tabId);
   if (action.action === 'mute_tab') return { muted: tab.mutedInfo?.muted ?? false };
@@ -77,6 +87,20 @@ export function recordUndo(env: ExecutionEnvironment, kind: UndoRecord['kinds'][
   if (JSON.stringify(patch.before) === JSON.stringify(patch.after)) return;
   let record = env.state.undo.find(record => record.id === env.operationId);
   if (!record) { record = { id: env.operationId, label: env.transcript.slice(0, 120), kinds: [], patches: [], at: Date.now() }; env.state.undo.unshift(record); env.state.undo = env.state.undo.slice(0, 10); }
+  const before = patch.before; const after = patch.after;
+  if (before.index !== undefined && before.windowId !== undefined && after.index !== undefined && after.windowId !== undefined) {
+    const priorTarget = record.patches.find(item => item.tabId === patch.tabId && item.after.index !== undefined);
+    if (priorTarget && (priorTarget.after.index !== before.index || priorTarget.after.windowId !== before.windowId)) record.positionConflict = true;
+    // Advance expected positions only by the verified movement we performed.
+    // A later wait must never turn a manual tab move into an undoable effect.
+    for (const prior of record.patches) {
+      const expected = prior.after;
+      if (expected.index === undefined || expected.windowId === undefined) continue;
+      if (prior.tabId === patch.tabId) { expected.index = after.index; expected.windowId = after.windowId; continue; }
+      if (expected.windowId === before.windowId && expected.index > before.index) expected.index--;
+      if (expected.windowId === after.windowId && expected.index >= after.index) expected.index++;
+    }
+  }
   if (!record.kinds.includes(kind)) record.kinds.push(kind);
   record.patches.push({ ...patch, kind }); env.state.lastUndoId = record.id;
 }
@@ -84,24 +108,37 @@ export async function applyUndo(env: ExecutionEnvironment, kind?: UndoRecord['ki
   const record = kind ? env.state.undo.find(record => record.kinds.includes(kind)) : env.state.undo.find(record => record.id === env.state.lastUndoId);
   if (!record) throw new Error('There is no matching change to undo. Undo supports tab moves, pinning, muting, and zoom.');
   const selected = record.patches.filter(patch => !kind || patch.kind === kind);
+  if (record.positionConflict && selected.some(patch => patch.before.index !== undefined)) throw new Error('A target moved outside this command. Its latest state will be kept.');
   const merged = new Map<number, UndoPatch>();
   for (const patch of selected) {
     const prior = merged.get(patch.tabId);
     merged.set(patch.tabId, prior ? { ...prior, before: { ...patch.before, ...prior.before }, after: { ...prior.after, ...patch.after } } : { ...patch, before: { ...patch.before }, after: { ...patch.after } });
   }
-  const patches = [...merged.values()].reverse();
+  const expectedPatches = [...merged.values()];
+  const currentWindows = new Map<number, number>();
   // Check every target before applying the saved values.
-  for (const patch of patches) {
+  for (const patch of expectedPatches) {
     checkCancelled(env.signal);
     const tab = await chrome.tabs.get(patch.tabId); const expected = patch.after;
+    currentWindows.set(patch.tabId, tab.windowId);
     if ((expected.muted !== undefined && !!tab.mutedInfo?.muted !== expected.muted) || (expected.pinned !== undefined && tab.pinned !== expected.pinned) || (expected.windowId !== undefined && tab.windowId !== expected.windowId) || (expected.index !== undefined && tab.index !== expected.index) || (expected.zoom !== undefined && Math.abs(await chrome.tabs.getZoom(patch.tabId) - expected.zoom) > 0.001)) throw new Error('A target changed after this command. Its latest state will be kept.');
   }
-  for (const patch of patches) {
+  const destinations = new Set(selected.flatMap(patch => patch.before.windowId !== undefined && patch.before.windowId !== currentWindows.get(patch.tabId) ? [patch.before.windowId] : []));
+  for (const windowId of destinations) {
+    checkCancelled(env.signal);
+    if (!(await chrome.tabs.query({ windowId })).length) throw new Error('An original window is no longer open. Undo stopped before changing any tabs.');
+  }
+  // Moves affect the positions of other targets. Replaying the individual
+  // snapshots backwards preserves those dependencies, including repeated moves
+  // of the same tab within one command.
+  for (const patch of [...selected].reverse()) {
     checkCancelled(env.signal); const before = patch.before;
     if (before.muted !== undefined) await chrome.tabs.update(patch.tabId, { muted: before.muted });
     if (before.pinned !== undefined) await chrome.tabs.update(patch.tabId, { pinned: before.pinned });
     if (before.index !== undefined) await chrome.tabs.move(patch.tabId, { index: before.index, ...(before.windowId !== undefined ? { windowId: before.windowId } : {}) });
     if (before.zoom !== undefined) await chrome.tabs.setZoom(patch.tabId, before.zoom);
+    const actual = await chrome.tabs.get(patch.tabId);
+    if ((before.muted !== undefined && !!actual.mutedInfo?.muted !== before.muted) || (before.pinned !== undefined && actual.pinned !== before.pinned) || (before.windowId !== undefined && actual.windowId !== before.windowId) || (before.index !== undefined && actual.index !== before.index) || (before.zoom !== undefined && Math.abs(await chrome.tabs.getZoom(patch.tabId) - before.zoom) > 0.001)) throw new CommandFailure('unknown-outcome', 'Chrome did not confirm the undo. Check the tabs before trying again; some changes may have been restored.');
   }
   const undoneKinds = kind ? [kind] : record.kinds;
   record.patches = record.patches.filter(patch => !selected.includes(patch));
@@ -118,10 +155,6 @@ export async function finalizeUndo(env: ExecutionEnvironment): Promise<void> {
     const tab = latest.get(patch.tabId) ?? await chrome.tabs.get(patch.tabId).catch(() => undefined);
     if (!tab) continue;
     latest.set(patch.tabId, tab);
-    if (patch.after.index !== undefined) patch.after.index = tab.index;
-    if (patch.after.windowId !== undefined) patch.after.windowId = tab.windowId;
-    if (patch.after.pinned !== undefined) patch.after.pinned = tab.pinned;
-    if (patch.after.muted !== undefined) patch.after.muted = tab.mutedInfo?.muted ?? false;
-    if (patch.after.zoom !== undefined) patch.after.zoom = await chrome.tabs.getZoom(patch.tabId);
+    if ((patch.after.index !== undefined && patch.after.index !== tab.index) || (patch.after.windowId !== undefined && patch.after.windowId !== tab.windowId)) record.positionConflict = true;
   }
 }

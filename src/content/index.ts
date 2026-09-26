@@ -12,7 +12,7 @@ if (!document.getElementById('handsfree-chrome-hud-root')) {
     if (message.type === 'HUD_STATE') { hud.update(message.state); respond({ ok: true }); return false; }
     if (message.type === 'PAGE_PROBE') { respond(page.probe()); return false; }
     if (message.type === 'PAGE_CANCEL') { page.cancel(); respond({ ok: true, text: 'Stopped' }); return false; }
-    if (message.type === 'PAGE_DICTATE') { respond(page.dictate(message.text, message.token)); return false; }
+    if (message.type === 'PAGE_DICTATE') { void page.dictate(message.text, message.token).then(respond, () => respond({ ok: false, text: 'Dictation could not enter that text.' })); return true; }
     if (message.type === 'PAGE_COMMAND') { void page.execute(message.command, message.token).then(respond, () => respond({ ok: false, text: 'This page could not complete that action.' })); return true; }
     return false;
   };

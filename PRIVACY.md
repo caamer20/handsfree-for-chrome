@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective September 15, 2026.
+Effective September 26, 2026.
 
 HandsFree for Chrome has no account system, analytics, advertising, or application backend. It does not send your transcripts, tab list, bookmarks, or action history to a HandsFree service.
 
@@ -18,11 +18,11 @@ The background worker reads tab titles and URLs to find tabs and performs reques
 
 ## Personal sites, workspaces, and reading list
 
-Saved nicknames include their names, website addresses, and optional search templates. Saved workspaces contain tab URLs/titles, pin states, and named group metadata. They live in local extension storage and can be edited or deleted through Library. The optional Learn my sites feature requests Chrome’s topSites permission only after you enable it; suggestions retain site origins, not visited paths, queries, or titles. Suggestions are not automatically used as nicknames. Turning learning off clears suggestions; manually saved nicknames remain.
+Saved nicknames include their names, website addresses, and optional search templates. Saved workspaces contain tab URLs/titles, pin states, the active tab, and group names, colors, and collapsed states. Nicknames and workspaces live in local extension storage. Library lets you edit or delete nicknames and view, restore, or delete workspaces. Saving a workspace under the same name updates it. The optional Learn my sites feature requests Chrome’s topSites permission only after you enable it; suggestions retain site origins, not visited paths, queries, or titles. Suggestions are not automatically used as nicknames. Turning learning off clears suggestions; manually saved nicknames remain.
 
 The tabGroups permission supports requested group creation, updates, and movement. The readingList permission supports saving, listing, opening, updating, and removing entries in Chrome’s reading list. Reading-list data is stored by Chrome and may follow the browser profile’s sync settings; HandsFree does not copy the full list into its persistent storage. These collections are not sent to AI providers.
 
-Recent target IDs, titles/URLs, clarification choices, and undo values are held in session storage to support follow-ups. Reference prompts expire after five minutes; undo retains at most ten command records. Browser restart clears this conversation state. Stopping listening clears pending questions and reviews, while recent targets and supported undo records remain until restart or expiry. Brief spoken feedback uses a local speech-synthesis voice; a sound is used if no suitable local voice is available.
+Recent target IDs, titles/URLs, clarification choices, and undo values are held in session storage to support follow-ups. Reference prompts expire after five minutes; undo retains at most ten command records. Browser restart clears this conversation state. Stopping listening clears pending questions and reviews. Recent target references retain their expiry; supported undo records remain until consumed, displaced by newer records, or cleared by browser restart. Brief spoken feedback uses a local speech-synthesis voice; a sound is used if no suitable local voice is available.
 
 ## Optional cloud AI and API keys
 
@@ -54,6 +54,14 @@ HandsFree’s use and transfer of information received from Google APIs adheres 
 
 ## Spoken setup, alternatives, and recovery (1.8)
 
-A local flag records whether the guided spoken command was recognized, interpreted, executed, and verified. Setup's transcript and stage details stay in session storage. Recognition alternatives are bounded and used locally to ask a choice when supported meanings differ; unchosen alternatives are not independently sent to cloud AI. Dictation uses the primary transcript literally.
+A local flag records whether the guided spoken command was recognized, interpreted, executed, and verified. Setup's transcript and stage details stay in session storage. Recognition alternatives are bounded and used locally to ask a choice when supported meanings differ; unchosen alternatives are not independently sent to cloud AI. Dictation uses the primary transcript, with local line-break controls and optional punctuation formatting described below.
 
 Recovery retains the command, completed-step progress, remaining actions, and target IDs/URLs in session storage. Eligible permission failures can resume only after explicit permission and Resume actions. Navigation, replacement commands, cancellation, browser restart, or a five-minute expiry invalidate a pending recovery. The side panel uses the same local state as the popup and does not add analytics or external data sharing.
+
+## Text correction, page navigation, and portable libraries (1.9)
+
+Selecting and replacing phrases inspects only the focused editable field in the permitted page. A one-step dictation correction temporarily retains the field's before/after text and selection in that page's content-script memory. It is not saved in extension storage or sent to an AI provider. Field changes, focus/session changes, or use of the correction invalidate it. Optional spoken punctuation is processed locally and is off by default; “literal …” bypasses that formatting.
+
+Page-outline commands inspect accessible headings and landmarks locally. A question may keep bounded destination labels and the chosen page reference in session storage. Find-text scans stay within the page and exclude editable fields. Existing injected controllers are checked against Chrome's current access decision before retained page actions or dictated text are sent, so these commands stop when Chrome no longer grants access. Removing optional website access does not remove a separately valid temporary activeTab grant.
+
+Library export creates a JSON file on the user's device containing saved site nicknames and URLs, both routine types and their saved steps, and workspaces with tab URLs/titles and group metadata. This file can contain private saved information. It excludes API credentials, device settings, permission grants, setup history, activity, site suggestions, and unsaved routine inputs. Import previews additions, validates the latest saved library, skips identical entries, and never runs imported commands or grants permissions. HandsFree does not upload library files or sync them to a server.

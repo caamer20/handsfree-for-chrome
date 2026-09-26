@@ -4,6 +4,7 @@ import { speechChoices, spokenCorrection } from '../src/common/speech-intent';
 import { migrateSettings } from '../src/common/settings';
 import { isSetupCommand } from '../src/common/setup';
 import { contextExamples } from '../src/common/suggestions';
+import { recoveryIntent } from '../src/common/recovery';
 
 const identify = (text: string): string | undefined => { const actions = parseCommand(text); return actions ? JSON.stringify(actions) : undefined; };
 it.each(['mute this tab no actually pin this tab', 'mute this tab, actually pin this tab', 'mute this tab sorry I meant pin this tab'])('uses an explicit complete spoken replacement: %s', text => {
@@ -41,4 +42,11 @@ it('isolates a corrupt setting and disables an unknown AI provider', () => {
 });
 it('offers only locally supported contextual examples', () => {
   for (const origin of [undefined, 'https://youtube.com/*', 'https://example.com/*']) for (const example of contextExamples(origin)) expect(parseCommand(example.text), example.text).not.toBeNull();
+});
+it.each(['resume remaining steps', 'Please resume the remaining steps.'])('recognizes an explicit recovery resume: %s', text => {
+  expect(recoveryIntent(text)).toBe('RESUME_COMMAND');
+});
+it('recognizes an explicit recovery retarget', () => { expect(recoveryIntent('choose another tab')).toBe('CHOOSE_RECOVERY_TAB'); });
+it.each(['resume', 'do not resume remaining steps', 'type choose another tab', 'search Google for resume remaining steps', 'resume remaining steps then close tabs'])('keeps recovery controls exact: %s', text => {
+  expect(recoveryIntent(text)).toBeUndefined();
 });

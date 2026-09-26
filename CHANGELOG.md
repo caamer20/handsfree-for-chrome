@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.9.0 — Developer preview
+
+- Portable library export and reviewed import for site nicknames, both routine types, and workspaces. Existing entries remain intact; identical items are skipped.
+- Workspace restoration preserves the active tab and distinct named or unnamed groups, including their colors and collapsed state. Older saves remain supported.
+- Voice editing inside the focused field: select a phrase, replace a phrase, and move the cursor to the start or end. Repeated matches require a more specific phrase.
+- Page-outline navigation through headings and landmarks; horizontal panel scrolling; find phrases across inline formatting.
+- Caret-aware dictation, verified editor updates, and a guarded one-step “scratch that” correction. “Literal …” inserts reserved dictation phrases as text.
+- Optional spoken punctuation in dictation, off by default and separate from literal command text.
+- Conflicting speech alternatives cannot silently approve a review or choose a different target. Speech buffered before a review or dictation-mode change is discarded.
+- Stable ordering for moves of several tabs and chronological undo. Reviewed commands continue on the remaining tab or first opened article.
+- Spoken recovery controls and confirmed per-target progress for workspace restore, sorting, and muting; Stop remains effective across reviewed-action continuations.
+- Disabled fieldset controls and labels inside open shadow roots are handled correctly. Routine previews and keyboard focus survive unrelated background updates.
+
 ## 1.8.0 — Developer preview
 
 - Lightweight standard edition without model weights or the local inference runtime; a separate optional local-AI package.

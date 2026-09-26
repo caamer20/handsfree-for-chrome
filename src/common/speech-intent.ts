@@ -23,3 +23,13 @@ export function speechChoices(primary: string, alternatives: string[], identify:
   // An alternate never silently replaces the user's top transcript, even if it parses.
   return choices.length > 1 || (!firstKey && choices.length) ? choices : [];
 }
+
+/** A recognized alternative must not silently change a pending decision. */
+export function speechDecisionConflict(primary: string, alternatives: string[], identify: (text: string) => string | undefined): boolean {
+  const first = identify(primary);
+  if (first === undefined) return false;
+  return alternatives.slice(0, 3).some(text => {
+    const meaning = identify(text);
+    return meaning !== undefined && meaning !== first;
+  });
+}

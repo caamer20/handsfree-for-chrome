@@ -1,6 +1,7 @@
 import { isNegatedCommand } from '../common/language';
 import { normalize } from '../background/fuzzy';
 import type { ChromeAction } from '../common/schema';
+import { parseCommand } from '../common/command-parser';
 
 const siteNames: Record<string, string[]> = {
   'google.com': ['google'], 'youtube.com': ['youtube'], 'github.com': ['github'],
@@ -10,11 +11,25 @@ const siteNames: Record<string, string[]> = {
 export function validateGrounding(actions: ChromeAction[], transcript: string): ChromeAction[] {
   if (isNegatedCommand(transcript)) throw new Error('This command asks not to act. No changes were made.');
   const source = normalize(transcript);
+  let strictSource: ChromeAction[] | undefined; let nextStrict = 0;
+  const matchesExplicitPageCommand = (action: Extract<ChromeAction, { action: 'page_action' }>): boolean => {
+    if (!strictSource) { try { strictSource = parseCommand(transcript) ?? []; } catch { strictSource = []; } }
+    for (let index = nextStrict; index < strictSource.length; index++) {
+      const expected = strictSource[index]; if (expected?.action !== 'page_action') continue;
+      const actualParams = action.params as Record<string, unknown>; const expectedParams = expected.params as Record<string, unknown>;
+      if ([...new Set([...Object.keys(actualParams), ...Object.keys(expectedParams)])].every(key => actualParams[key] === expectedParams[key])) { nextStrict = index + 1; return true; }
+    }
+    return false;
+  };
   const grounded = (slot: string): boolean => {
     const words = normalize(slot).split(' ').filter(Boolean);
     return words.length > 0 && words.every(word => source.split(' ').includes(word));
   };
   for (const action of actions) {
+    if (action.action === 'page_action') {
+      if (['select_text', 'replace_text'].includes(action.params.operation) && !matchesExplicitPageCommand(action)) throw new Error('The AI changed the text-editing command. Say “select text…” or “replace text…with…” using the exact text.');
+      if (['go_heading', 'go_landmark'].includes(action.params.operation) && action.params.index !== undefined && !matchesExplicitPageCommand(action)) throw new Error('The AI added or changed a page destination number. Say the heading or page region’s displayed number explicitly.');
+    }
     const slots: string[] = [];
     switch (action.action) {
       case 'browser_page': slots.push(action.params.page); break;

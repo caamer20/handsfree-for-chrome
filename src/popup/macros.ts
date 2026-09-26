@@ -8,6 +8,7 @@ export class MacrosPanel {
   private editingId: string | null = null;
   private deletingId: string | null = null;
   private busy = false;
+  private renderKey = '';
   constructor(private perform: (message: Message) => Promise<boolean>, private showControl: () => void) {
     el('new-macro').addEventListener('click', () => this.edit());
     el('cancel-macro').addEventListener('click', () => this.closeEditor());
@@ -19,6 +20,9 @@ export class MacrosPanel {
     el<HTMLButtonElement>('new-macro').disabled = busy || macros.length >= MAX_MACROS;
     el<HTMLButtonElement>('save-macro').disabled = busy;
     el('macro-empty').hidden = macros.length > 0 || !el('macro-form').hidden;
+    const key = JSON.stringify([macros, busy, this.deletingId]);
+    if (key === this.renderKey) return;
+    this.renderKey = key;
     const list = el('macro-list'); list.replaceChildren();
     for (const macro of macros) {
       const card = document.createElement('article'); card.className = 'macro-card';

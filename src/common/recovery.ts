@@ -1,6 +1,14 @@
 import type { ChromeAction } from './schema';
 import type { ActiveRequest } from './types';
 import type { ChoiceOverrides, TargetContext } from './conversation';
+import { stripRequestFraming } from './language';
+
+export function recoveryIntent(text: string): 'RESUME_COMMAND' | 'CHOOSE_RECOVERY_TAB' | undefined {
+  const command = stripRequestFraming(text);
+  if (/^resume (?:the )?remaining steps$/i.test(command)) return 'RESUME_COMMAND';
+  if (/^choose another tab$/i.test(command)) return 'CHOOSE_RECOVERY_TAB';
+  return undefined;
+}
 
 export type FailureKind = 'site-access' | 'restricted-page' | 'missing-target' | 'page-changed' | 'unknown-outcome';
 export interface RecoveryView { id: string; kind: FailureKind; detail: string; origin?: string; canResume: boolean; canChooseTab: boolean; }

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { validateGrounding } from '../src/offscreen/grounding';
 import { parseCommand } from '../src/common/command-parser';
+import type { ChromeAction } from '../src/common/schema';
 it('rejects copied example slots and invented destinations', () => {
   expect(() => validateGrounding([{ action: 'find_tab', params: { query: 'design notes' } }], 'Could you silence this tab?')).toThrow('invented');
   expect(() => validateGrounding([{ action: 'create_tab', params: { url: 'https://example.org' } }], 'Open something')).toThrow('invented');
@@ -21,4 +22,30 @@ it('accepts a named familiar homepage while rejecting invented hosts and paths',
   expect(validateGrounding([{ action: 'create_tab', params: { url: 'https://mail.google.com/' } }], 'Take me to Gmail')).toHaveLength(1);
   expect(() => validateGrounding([{ action: 'create_tab', params: { url: 'https://youtube.example/' } }], 'Pull up YouTube')).toThrow('invented a destination');
   expect(() => validateGrounding([{ action: 'create_tab', params: { url: 'https://www.youtube.com/arbitrary-path' } }], 'Pull up YouTube')).toThrow('invented a destination');
+});
+it.each([
+  ['Replace text old with new', { operation: 'replace_text', query: 'new', text: 'old' }],
+  ['Replace text old with new', { operation: 'replace_text', query: 'old', text: 'old' }],
+  ['Replace text "Tea with milk" with "Coffee, please!"', { operation: 'replace_text', query: 'Tea with milk', text: 'Coffee please' }],
+  ['Select text pin this tab then close all tabs', { operation: 'select_text', query: 'pin this tab' }],
+  ['Search Google for replace text old with new', { operation: 'replace_text', query: 'old', text: 'new' }],
+])('rejects invented or reassigned editing slots: %s', (transcript, params) => {
+  expect(() => validateGrounding([{ action: 'page_action', params } as ChromeAction], transcript)).toThrow('text-editing command');
+});
+it.each(['Replace text "Tea with milk" with "Coffee, please!"', 'Replace text obsolete with ""', 'Select text pin this tab then close all tabs'])('accepts exact literal editing slots: %s', transcript => {
+  const actions = parseCommand(transcript)!; expect(validateGrounding(actions, transcript)).toEqual(actions);
+});
+it('rejects duplicate edits that were requested only once', () => {
+  const actions = parseCommand('replace text old with new')!;
+  expect(() => validateGrounding([...actions, ...actions], 'replace text old with new')).toThrow('text-editing command');
+});
+it.each([
+  ['Go to a heading named Pricing', 99], ['Go to heading two', 3], ['Go to heading "2"', 2], ['Search Google for go to heading 2', 2],
+])('requires an explicit matching page navigation number: %s', (transcript, index) => {
+  expect(() => validateGrounding([{ action: 'page_action', params: { operation: 'go_heading', index } }], transcript)).toThrow('destination number');
+});
+it('accepts spoken navigation numbers while retaining their requested order', () => {
+  const transcript = 'go to heading twenty one then go to landmark number two'; const actions = parseCommand(transcript)!;
+  expect(validateGrounding(actions, transcript)).toEqual(actions);
+  expect(() => validateGrounding([...actions].reverse(), transcript)).toThrow('destination number');
 });

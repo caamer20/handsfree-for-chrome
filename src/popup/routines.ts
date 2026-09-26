@@ -10,6 +10,7 @@ export class RoutinesPanel {
   private imported: Routine[] = [];
   private dragging: number | null = null;
   private editingId: string | null = null;
+  private renderKey = '';
   constructor(private perform: (message: Message) => Promise<boolean>, private showControl: () => void) {
     el('export-routines').addEventListener('click', () => this.export());
     el('import-routines').addEventListener('change', () => { void this.import(); });
@@ -35,6 +36,9 @@ export class RoutinesPanel {
     this.saved = routines; el<HTMLButtonElement>('export-routines').disabled = !routines.length;
     el<HTMLInputElement>('import-routines').disabled = busy; el<HTMLButtonElement>('confirm-routine-import').disabled = busy;
     el('routine-count').textContent = `(${routines.length}/50)`;
+    const key = JSON.stringify([routines, busy]);
+    if (key === this.renderKey) return;
+    this.renderKey = key;
     const list = el('routine-list'); list.replaceChildren();
     el('routine-empty').hidden = routines.length > 0;
     for (const routine of routines) {

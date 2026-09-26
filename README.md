@@ -19,14 +19,17 @@
 
 HandsFree turns spoken or typed commands into browser actions. Find a tab by name, organize a workspace, edit a form, dictate into a text field, or combine commands into a routine of your own. Common commands run through a local parser. An AI account is optional.
 
-> **Developer preview:** Version 1.8 adds installed-Chrome tests, spoken setup, a persistent side panel, and recoverable errors. Automated speech tests use synthetic transcription results; real microphones, accents, OS sleep/wake, and complex third-party websites still need human testing. HandsFree is not listed in the Chrome Web Store. See the [validation record](docs/VALIDATION.md).
+> **Developer preview:** Version 1.9 adds voice text correction, page-outline navigation, portable library backups, faithful workspace restoration, and stronger speech and permission checks. Automated speech tests use synthetic transcription results; real microphones, accents, OS sleep/wake, and complex third-party websites still need human testing. HandsFree is not listed in the Chrome Web Store. See the [validation record](docs/VALIDATION.md).
 
 ## What you can do
 
 - **Control tabs and windows.** Find, switch, pin, mute, move, group, sort, close, and reopen tabs. Work with named tabs, positions, ranges, and filtered sets.
 - **Work on the page.** Scroll, find text, number links and form fields, fill or clear text, select dropdown options, and control native media.
+- **Navigate page structure.** Choose a heading or page region, move through headings by voice, and find phrases across inline formatting.
 - **Dictate into a field.** Speak text while continuously listening; say “stop dictation” to return to commands.
+- **Correct text by voice.** Select or replace a phrase in the focused field, move the cursor, or say “scratch that” during dictation to undo the last unchanged insertion.
 - **Make it personal.** Save website nicknames, preferred apps, workspaces, and groups of websites to open together.
+- **Keep your library portable.** Export site nicknames, both kinds of routines, and workspaces together; preview an import before adding it without overwriting saved entries.
 - **Build reusable routines.** Supply inputs such as `{topic}`, reorder steps, wait for a page or field, and import/export routine templates.
 - **See what happened.** Follow action progress, answer clarifying questions, review bulk closures, and inspect confirmed completions when execution stops.
 - **Keep controls nearby.** Open the optional side panel for your transcript, current tab, progress, choices, and Stop button across tab changes.
@@ -65,13 +68,18 @@ For commands that interact with a website, open **Settings → Page controls →
 | “Pin tabs two, four, and six” | Target specific positions in the current window. |
 | “Close all tabs except Gmail” | Review the tabs to close while keeping the named tab. |
 | “Show links” | Number visible links and controls; follow with “click number five”. |
+| “Show headings” | Choose a heading from the page outline, then navigate without activating its links. |
 | “Fill the search box with black holes” | Replace the field’s text without submitting the form. |
 | “Choose Canada from the Country dropdown” | Select an exact label in a native dropdown. |
 | “Start dictation” | Insert speech into the focused editable field. |
+| “Replace text black holes with neutron stars” | Replace one occurrence inside the focused editable field. |
+| “Move the cursor to the end” | Put the caret after the focused field’s text. |
 | “Save this workspace as Research” | Save web tabs, pin states, and named groups locally. |
 | “Wait for the search field” | Wait up to 15 seconds for a matching editable field. |
 | “Undo that move” | Restore a supported tab move, if the target has not changed manually. |
 | “Stop” | Cancel remaining command work while retaining completed changes. |
+
+For punctuation words during dictation, enable **Settings → Spoken punctuation in dictation**. Say “literal …” to keep a phrase unchanged. See the [command guide](docs/COMMANDS.md) for correction, page navigation, and recovery details.
 
 The **Commands** tab contains searchable examples and alternate wording. Names, numbers, and search terms can be changed to suit your task. [Command details and limits](docs/COMMANDS.md)
 
@@ -96,7 +104,9 @@ Say **“research black holes”**, or choose **Preview & run** and answer the i
 - Export templates as JSON. Import previews every routine and refuses conflicting phrases without overwriting saved routines.
 - Routines pause for clarification and resume only unfinished actions. A failure or cancellation stops remaining actions; it does not roll back completed changes.
 
-Under **Library → Routines**, choose **Command steps** for action sequences or **Open websites** for a saved list of up to 20 sites. Existing website macros appear here automatically. **Workspaces** restore saved tabs and named groups in a new window.
+Under **Library → Routines**, choose **Command steps** for action sequences or **Open websites** for a saved list of up to 20 sites. Existing website macros appear here automatically. **Workspaces** restore saved tabs, pin states, the active tab, and separate groups with their colors and collapsed states in a new window. Groups remain separate even when their titles match or are empty.
+
+Choose **Library → Back up or move your library** to export those saved collections as one JSON file. Import shows what will be added and skips identical entries. Conflicting saved names or spoken phrases stop the import before changes are saved. The file includes saved URLs and command steps; settings, API keys, site permissions, setup history, activity, and site suggestions are excluded. Nothing runs when importing. Files are limited to 5 MiB.
 
 ## Setup and troubleshooting
 
@@ -138,7 +148,7 @@ Common commands and routine templates are processed locally. With cloud AI enabl
 - Standard text inputs, textareas, plain contenteditable, native checkboxes/radios, and native single-select dropdowns are supported. Custom editors, protected pages, and inaccessible frames may require manual interaction.
 - Password, hidden, disabled, and readonly text fields are excluded. Form entry does not implicitly submit.
 - Page and field waits stop after 15 seconds. A document-load event does not guarantee that a site has finished all background requests.
-- Undo covers supported tab moves, pinning, muting, and zoom. It is not a general undo for form edits, sorting, or an entire routine.
+- Undo covers supported tab moves, pinning, muting, and zoom. During dictation, “scratch that” can restore the last unchanged insertion. Neither is a general undo for form edits, sorting, or an entire routine.
 - The repository’s model evaluation deliberately fails when the small model returns an incorrect intent. That quality limitation is not hidden by the passing application tests.
 
 ## Development
@@ -166,7 +176,7 @@ The standard build needs no model download. For local AI, run `npm run models:do
 | `npm run check:local-ai` | Build and verify the optional edition, after downloading models. |
 | `npm run eval:model` | Run the separate model-quality evaluation; see its known failure above. |
 
-The [CI workflow](.github/workflows/build-and-test.yml) checks and packages both editions, audits production dependencies, and runs installed-browser suites on Linux, macOS, and Windows. It also checks upgrading the published 1.7 preview. Platform execution results are distinct from the local validation record. For architecture, manual voice coverage, and contribution instructions, see [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/VALIDATION.md](docs/VALIDATION.md).
+The [CI workflow](.github/workflows/build-and-test.yml) checks and packages both editions, audits production dependencies, and runs installed-browser suites on Linux, macOS, and Windows. It also checks upgrades from the published 1.8 and 1.7 previews. Platform execution results are distinct from the local validation record. For architecture, manual voice coverage, and contribution instructions, see [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/VALIDATION.md](docs/VALIDATION.md).
 
 ## Project and support
 

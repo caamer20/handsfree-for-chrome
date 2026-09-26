@@ -29,7 +29,17 @@ export function describeAction(action: ChromeAction): string {
     case 'select_tabs': return `Select ${action.params.queries.join(', ')}`;
     case 'move_beside': return `Move next to ${action.params.query}`;
     case 'undo_action': return `Undo ${action.params.kind ?? 'the last supported change'}`;
-    case 'page_action': return action.params.operation.replaceAll('_', ' ') + (action.params.query ? ` “${action.params.query}”` : '') + (action.params.index !== undefined ? ` number ${action.params.index}` : '') + (action.params.text !== undefined ? ` with “${action.params.text}”` : '') + (action.params.value !== undefined ? ` ${action.params.relative ? 'by ' : 'to '}${action.params.value}${action.params.operation === 'media_volume' ? ' percent' : ' seconds'}` : '') + (action.params.direction ? ` ${action.params.direction}` : '');
+    case 'page_action': {
+      const p = action.params;
+      if (p.operation === 'show_headings') return 'Choose a heading from the page outline';
+      if (p.operation === 'show_landmarks') return 'Choose a page region';
+      if (['next_heading', 'previous_heading', 'next_landmark', 'previous_landmark'].includes(p.operation)) return `Go to the ${p.operation.replace('_', ' ').replace('landmark', 'page region')}`;
+      if (p.operation === 'go_heading' || p.operation === 'go_landmark') return `Go to ${p.operation === 'go_heading' ? 'heading' : 'page region'} ${p.index ?? `“${p.query}”`}`;
+      if (p.operation === 'select_text') return `Select “${p.query}” in the focused field`;
+      if (p.operation === 'replace_text') return `Replace “${p.query}” with “${p.text}” in the focused field`;
+      if (p.operation === 'cursor_start' || p.operation === 'cursor_end') return `Move the cursor to the ${p.operation === 'cursor_start' ? 'start' : 'end'} of the focused field`;
+      return p.operation.replaceAll('_', ' ') + (p.query ? ` “${p.query}”` : '') + (p.index !== undefined ? ` number ${p.index}` : '') + (p.text !== undefined ? ` with “${p.text}”` : '') + (p.value !== undefined ? ` ${p.relative ? 'by ' : 'to '}${p.value}${p.operation === 'media_volume' ? ' percent' : ' seconds'}` : '') + (p.direction ? ` ${p.direction}` : '');
+    }
     case 'group_action': return `${action.params.operation.replaceAll('_', ' ')} group ${action.params.name}${action.params.color ? ` · ${action.params.color}` : action.params.new_name ? ` to ${action.params.new_name}` : ''}`;
     case 'workspace_action': return `${action.params.operation} workspace ${action.params.name ?? ''}`;
     case 'reading_action': return `${action.params.operation.replaceAll('_', ' ')} in the reading list`;

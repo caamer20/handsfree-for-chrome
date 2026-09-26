@@ -14,6 +14,7 @@ const card = (name: string, detail: string): HTMLElement => {
   node.append(heading, info); return node;
 };
 export class LibraryPanel {
+  private renderKey = '';
   private editingId: string | null = null;
   constructor(private perform: (message: Message) => Promise<boolean>, private showControl: () => void) {
     document.querySelectorAll<HTMLElement>('[data-library]').forEach(tab => tab.addEventListener('click', () => this.show(tab.dataset.library ?? 'sites')));
@@ -40,6 +41,9 @@ export class LibraryPanel {
   private async run(text: string): Promise<void> { if (await this.perform({ target: 'background', type: 'RUN_TEXT', text })) this.showControl(); }
   render(state: AppState): void {
     const library = state.library ?? { aliases: [], workspaces: [], suggestions: [] };
+    const key = JSON.stringify([library, state.settings.learnTopSites, state.listening, state.hud.phase === 'thinking']);
+    if (key === this.renderKey) return;
+    this.renderKey = key;
     const aliases = el('alias-list'); aliases.replaceChildren();
     if (!library.aliases.length) aliases.append(card('Your names, your websites', 'Say “call this site Work dashboard”, or add a nickname here.'));
     for (const alias of library.aliases) {
