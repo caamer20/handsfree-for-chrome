@@ -1,6 +1,5 @@
 {
   "version": "1.9.0",
-  "sourceCommit": "f3b9193cb57e079703197805c8bbac809ad0d138",
   "browser": "Chrome for Testing 153.0.8010.12",
   "platform": "macOS x64",
   "browserSuite": {
@@ -321,5 +320,7 @@
     "skipped": 0,
     "unexpected": 0,
     "flaky": 0
-  }
+  },
+  "fullLocalSuiteCommit": "f3b9193cb57e079703197805c8bbac809ad0d138",
+  "readinessRegressionCommit": "83fcf699ec0f4d6807c17aae6b9e5e4cbad3cfb7"
 }

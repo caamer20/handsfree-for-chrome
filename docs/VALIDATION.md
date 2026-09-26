@@ -12,11 +12,13 @@ Executed September 26, 2026 UTC on macOS x64 with Node 24.2.0 and Chrome for Tes
 | Repeated native surface checks | All 15 checks passed across five repetitions after the pointer-readiness fix. |
 | Optional edition installed smoke | Both installation/typed-command and persisted-preference checks passed with AI off. |
 | Production dependency audit | Zero reported vulnerabilities. |
-| Published 1.7 and 1.8 upgrade journeys | Both passed using verified published ZIPs, including library/preferences after reload and browser restart. |
-| Fresh-host Linux/macOS/Windows suite | All 64 browser cases passed on each platform in initial runs. A duplicate Linux run missed one opening side-panel click; its fixture now waits for stable, visible, hit-testable coordinates. The upgrade download tag is corrected. A later duplicate run exposed committed-URL timing and a slow Windows module startup; bounded readiness checks now preserve the same exact outcomes. Final complete CI rerun pending. |
+| Published 1.7 and 1.8 upgrade journeys | Both passed locally and in Linux CI using verified published ZIPs, including library/preferences after reload and browser restart. |
+| Fresh-host Linux/macOS/Windows suite | All 64 browser cases passed on each platform, including both native fake-microphone setup cases. No skipped tests or retries. |
 | Optional local-model quality | Recorded native-q8 benchmark remains 0/12 exact plans. No expectations or model validation were weakened. |
 
-This record will be updated as release verification completes. A passing typed command or synthetic SpeechRecognition event is not measured human voice accuracy.
+The [complete CI run](https://github.com/caamer20/handsfree-for-chrome/actions/runs/36227005520) passed at commit `83fcf699ec0f4d6807c17aae6b9e5e4cbad3cfb7`. [CI evidence](validation/v1.9/ci-summary.json) and [local browser evidence](validation/v1.9/browser-summary.json) record counts, platforms, and timing. A passing typed command or synthetic SpeechRecognition event is not measured human voice accuracy.
+
+Earlier candidate runs exposed test-fixture assumptions about native-widget opening, committed tab URLs, and slow extension startup. The fixtures now wait for observable readiness while preserving real pointer input, exact tab counts, and the actual onboarding page. A published release-tag reference was also corrected before the complete passing CI run.
 
 ## Covered behavior
 

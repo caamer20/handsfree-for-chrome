@@ -1,0 +1,114 @@
+{
+  "version": "1.9.0",
+  "recordedAt": "2026-09-26T07:39:15.009153+00:00",
+  "verifiedCommit": "83fcf699ec0f4d6807c17aae6b9e5e4cbad3cfb7",
+  "run": {
+    "id": 36227005520,
+    "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36227005520",
+    "conclusion": "success"
+  },
+  "jobs": [
+    {
+      "name": "browser-platforms (windows-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36227005520/job/108362850717"
+    },
+    {
+      "name": "browser-platforms (macos-latest)",
+      "conclusion": "success",
+      "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36227005520/job/108362850873"
+    },
+    {
+      "name": "verify",
+      "conclusion": "success",
+      "url": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36227005520/job/108362850890"
+    }
+  ],
+  "platforms": {
+    "linux": {
+      "platform": "linux x64",
+      "browser": "153.0.8010.12",
+      "browserSuite": {
+        "startTime": "2026-09-26T07:32:38.553Z",
+        "duration": 173960.696,
+        "expected": 64,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "nativeMicrophoneSetupCases": [
+        {
+          "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+          "passed": true
+        },
+        {
+          "title": "shows speech interpretation failure without performing a different action",
+          "passed": true
+        }
+      ]
+    },
+    "macos": {
+      "platform": "darwin arm64",
+      "browser": "153.0.8010.12",
+      "browserSuite": {
+        "startTime": "2026-09-26T07:31:26.425Z",
+        "duration": 300118.30000000005,
+        "expected": 64,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "nativeMicrophoneSetupCases": [
+        {
+          "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+          "passed": true
+        },
+        {
+          "title": "shows speech interpretation failure without performing a different action",
+          "passed": true
+        }
+      ]
+    },
+    "windows": {
+      "platform": "win32 x64",
+      "browser": "153.0.8010.12",
+      "browserSuite": {
+        "startTime": "2026-09-26T07:31:52.120Z",
+        "duration": 293877.93600000005,
+        "expected": 64,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      },
+      "nativeMicrophoneSetupCases": [
+        {
+          "title": "completes spoken setup through real extension messaging with synthetic ASR output",
+          "passed": true
+        },
+        {
+          "title": "shows speech interpretation failure without performing a different action",
+          "passed": true
+        }
+      ]
+    }
+  },
+  "upgradeSuites": {
+    "1.7.0": {
+      "startTime": "2026-09-26T07:35:45.857Z",
+      "duration": 7608.339,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "1.8.0": {
+      "startTime": "2026-09-26T07:35:34.158Z",
+      "duration": 4780.973,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    }
+  },
+  "limits": "Synthetic ASR and native fake microphone in disposable Chrome profiles. No measured human speech accuracy, OS privacy-prompt coverage, physical microphone reliability, or battery measurement."
+}
