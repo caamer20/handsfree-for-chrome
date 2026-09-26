@@ -1,0 +1,20 @@
+[
+  {
+    "archive": "handsfree-for-chrome.zip",
+    "version": "1.10.0",
+    "edition": "standard",
+    "bytes": 213003,
+    "unpackedBytes": 630276,
+    "sha256": "77188435e4896a747fd489f2733eaee665549d945ff9f4fa6f3342e16ec4e7be",
+    "integrity": "passed"
+  },
+  {
+    "archive": "handsfree-for-chrome-local-ai.zip",
+    "version": "1.10.0",
+    "edition": "local-ai",
+    "bytes": 222273406,
+    "unpackedBytes": 377224729,
+    "sha256": "f79f0259a6a8e5772fec4dbed4767ed57e9425d9185f7ddd8108a850f93af1d1",
+    "integrity": "passed"
+  }
+]

@@ -1,0 +1,231 @@
+{
+  "failedRun": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36237298633",
+  "failedCommit": "e1a295a94fc41c55c030a8e0c2225d714ca1b533",
+  "selector": "#read-decision",
+  "events": [
+    {
+      "type": "pointerdown",
+      "trusted": true,
+      "inside": true,
+      "target": "BUTTON#read-decision",
+      "x": 274,
+      "y": 248.875,
+      "button": 0,
+      "geometry": {
+        "width": 570,
+        "height": 498,
+        "scrollX": 0,
+        "scrollY": 631,
+        "documentWidth": 660,
+        "documentHeight": 1726,
+        "viewport": {
+          "width": 720,
+          "height": 498,
+          "offsetLeft": 0,
+          "offsetTop": 0,
+          "scale": 1
+        },
+        "rect": [
+          199,
+          230.875,
+          349,
+          266.875
+        ],
+        "disabled": false,
+        "visibility": "visible",
+        "focused": true
+      }
+    },
+    {
+      "type": "mousedown",
+      "trusted": true,
+      "inside": true,
+      "target": "BUTTON#read-decision",
+      "x": 274,
+      "y": 248,
+      "button": 0,
+      "geometry": {
+        "width": 800,
+        "height": 498,
+        "scrollX": 0,
+        "scrollY": 631,
+        "documentWidth": 800,
+        "documentHeight": 1726,
+        "viewport": {
+          "width": 800,
+          "height": 498,
+          "offsetLeft": 0,
+          "offsetTop": 0,
+          "scale": 1
+        },
+        "rect": [
+          198.984375,
+          279.875,
+          347.984375,
+          315.875
+        ],
+        "disabled": false,
+        "visibility": "visible",
+        "focused": true
+      }
+    },
+    {
+      "type": "pointerup",
+      "trusted": true,
+      "inside": false,
+      "target": "SECTION#control",
+      "x": 274,
+      "y": 248.875,
+      "button": 0,
+      "geometry": {
+        "width": 800,
+        "height": 498,
+        "scrollX": 0,
+        "scrollY": 631,
+        "documentWidth": 800,
+        "documentHeight": 1726,
+        "viewport": {
+          "width": 800,
+          "height": 498,
+          "offsetLeft": 0,
+          "offsetTop": 0,
+          "scale": 1
+        },
+        "rect": [
+          198.984375,
+          279.875,
+          347.984375,
+          315.875
+        ],
+        "disabled": false,
+        "visibility": "visible",
+        "focused": true
+      }
+    },
+    {
+      "type": "mouseup",
+      "trusted": true,
+      "inside": false,
+      "target": "SECTION#control",
+      "x": 274,
+      "y": 248,
+      "button": 0,
+      "geometry": {
+        "width": 800,
+        "height": 498,
+        "scrollX": 0,
+        "scrollY": 631,
+        "documentWidth": 800,
+        "documentHeight": 1726,
+        "viewport": {
+          "width": 800,
+          "height": 498,
+          "offsetLeft": 0,
+          "offsetTop": 0,
+          "scale": 1
+        },
+        "rect": [
+          198.984375,
+          279.875,
+          347.984375,
+          315.875
+        ],
+        "disabled": false,
+        "visibility": "visible",
+        "focused": true
+      }
+    },
+    {
+      "type": "click",
+      "trusted": true,
+      "inside": false,
+      "target": "SECTION#control",
+      "x": 274,
+      "y": 248,
+      "button": 0,
+      "geometry": {
+        "width": 800,
+        "height": 498,
+        "scrollX": 0,
+        "scrollY": 631,
+        "documentWidth": 800,
+        "documentHeight": 1726,
+        "viewport": {
+          "width": 800,
+          "height": 498,
+          "offsetLeft": 0,
+          "offsetTop": 0,
+          "scale": 1
+        },
+        "rect": [
+          198.984375,
+          279.875,
+          347.984375,
+          315.875
+        ],
+        "disabled": false,
+        "visibility": "visible",
+        "focused": true
+      }
+    }
+  ],
+  "delivered": false,
+  "fixCommit": "159d8590c13aaf19bb5bd5dea3d385ecc40e81d0",
+  "fix": "Constrain the popup HTML root to 390px and isolate popup spacing from desktop viewport media styles. Preserve real pointer delivery and tighten the viewport width bound to 410px including scrollbar allowance.",
+  "localRepeatedNativeSuite": {
+    "startTime": "2026-09-26T11:08:24.610Z",
+    "duration": 48041.839,
+    "expected": 12,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "finalMacViewportFrames": [
+    {
+      "width": 405,
+      "height": 498,
+      "scrollWidth": 405,
+      "inputBottom": 457.5
+    },
+    {
+      "width": 405,
+      "height": 498,
+      "scrollWidth": 405,
+      "inputBottom": 457.5
+    },
+    {
+      "width": 405,
+      "height": 498,
+      "scrollWidth": 405,
+      "inputBottom": 457.5
+    },
+    {
+      "width": 405,
+      "height": 498,
+      "scrollWidth": 405,
+      "inputBottom": 457.5
+    },
+    {
+      "width": 405,
+      "height": 498,
+      "scrollWidth": 405,
+      "inputBottom": 457.5
+    },
+    {
+      "width": 405,
+      "height": 498,
+      "scrollWidth": 405,
+      "inputBottom": 457.5
+    }
+  ],
+  "finalMacBrowserSuite": {
+    "startTime": "2026-09-26T11:28:11.954Z",
+    "duration": 403927.417,
+    "expected": 77,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "finalRun": "https://github.com/caamer20/handsfree-for-chrome/actions/runs/36238861524",
+  "finalValidationCommit": "360aa5adfb9540e688048ac8bf77fde6835ae5ab"
+}

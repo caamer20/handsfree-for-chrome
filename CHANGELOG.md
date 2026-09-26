@@ -3,8 +3,9 @@
 ## 1.10.0 — Developer preview
 
 - Follow-up listening preserves the pending question or review in single-command mode. Stop interrupts pending voice-engine startup and readback requests. Read or repeat complete choices aloud, move between pages, and answer with stable option numbers.
-- Multiline plain contenteditable fields now preserve visible line breaks and paragraph boundaries. Hidden or noneditable content and oversized insertions are refused before mutation. Dictation undo restores original nodes, formatting, event listeners, and selection; page changes during an edit are rejected.
+- Multiline plain contenteditable fields now preserve visible line breaks and paragraph boundaries. Hidden or noneditable content, oversized insertions, and unsafe partial joins between nested paragraphs are refused before mutation. Dictation undo restores original nodes, formatting, event listeners, and selection; page changes during an edit are rejected.
 - Place the cursor before or after a unique phrase in the focused field.
+- Stabilize native popup sizing so buttons stay under the pointer, with larger paged-readback controls.
 - Review workspace updates and recover the previous saved version. Rename workspaces by voice, and review before discarding only their previous version. Updates validate both the proposed tabs and saved data again before writing; unchanged updates retain useful history.
 - Library backup version 2 includes workspace history, with continued support for version 1 imports and older saved workspaces. Library changes are serialized to protect concurrent saves and imports.
 - Saved website routines run by their selected identity, preserve the first opened tab as context, and retain all opened tabs for plural follow-up commands.
