@@ -77,7 +77,7 @@ function render(next: AppState): void {
   el('status-text').textContent = phase === 'idle' ? 'Tabs, search, and more. Just ask.' : next.hud.text;
   el('shortcut').textContent = next.shortcut || 'Set a shortcut in Settings';
   const listen = el<HTMLButtonElement>('listen');
-  listen.textContent = next.listening ? 'Stop listening  ■' : busy || next.pending || next.question || pendingRequest ? 'Cancel command' : next.settings.micGranted ? 'Start listening  ↗' : 'Set up microphone  ↗';
+  listen.textContent = next.listening ? 'Stop listening  ■' : busy || pendingRequest ? 'Cancel command' : next.pending || next.question ? 'Listen to answer  ↗' : next.settings.micGranted ? 'Start listening  ↗' : 'Set up microphone  ↗';
   listen.disabled = false;
   command.disabled = (next.question ? false : busy || !!next.pending) || pendingRequest;
   command.placeholder = next.question?.kind === 'text' ? 'Type your answer…' : next.question?.kind === 'name' ? 'Type a name…' : next.question ? 'Type an option number or title…' : 'Try “open a new tab”';
@@ -123,6 +123,15 @@ function render(next: AppState): void {
   if (next.question && next.question.id !== lastQuestionId) command.value = '';
   lastQuestionId = next.question?.id ?? null;
   el('clarification').hidden = !next.question;
+  const decisionId = next.question?.id ?? next.pending?.request.id;
+  const readback = next.decisionReadback?.decisionId === decisionId ? next.decisionReadback : undefined;
+  el('decision-controls').hidden = !decisionId;
+  el<HTMLButtonElement>('listen-decision').disabled = !decisionId || next.listening || pendingRequest || !next.settings.micGranted;
+  el<HTMLButtonElement>('read-decision').disabled = !decisionId || !!next.decisionListening || pendingRequest;
+  el<HTMLButtonElement>('previous-decision-page').disabled = !readback || readback.page === 0 || !!next.decisionListening || pendingRequest;
+  el<HTMLButtonElement>('next-decision-page').disabled = !readback || readback.page + 1 >= readback.totalPages || !!next.decisionListening || pendingRequest;
+  el('decision-readback-text').textContent = readback?.text ?? '';
+  el('decision-hint').textContent = !next.settings.micGranted ? 'Set up the microphone to answer by voice. Read aloud uses a local voice and does not enable the microphone.' : next.decisionListening ? 'Listening for one answer. Stop or the shortcut cancels the command.' : next.question && ['name', 'text'].includes(next.question.kind) ? 'Listen to answer, or press the shortcut. Your spoken words are used as the answer. Use Read aloud to repeat this prompt.' : 'Listen to answer, or press the shortcut. While listening, say “read the choices”, “read the command”, or “next choices”. Readback never approves a command. Speech recognition pauses during readback; the shortcut or Cancel command stops it.';
   el('dictation-state').hidden = !next.dictation;
   el('question-prompt').textContent = next.question?.prompt ?? '';
   const nextChoicesKey = JSON.stringify([next.question?.id, next.question?.choices]);
@@ -131,10 +140,19 @@ function render(next: AppState): void {
     choicesKey = nextChoicesKey; choices.replaceChildren();
     const questionId = next.question?.id;
     next.question?.choices.forEach((choice, index) => {
-    const button = document.createElement('button'); button.className = 'command-example'; button.disabled = pendingRequest;
-    const label = document.createElement('strong'); label.textContent = `${index + 1}. ${choice.label}`; button.append(label);
-    if (choice.detail) { const detail = document.createElement('small'); detail.textContent = choice.detail; button.append(detail); }
-      button.addEventListener('click', () => { if (questionId && state?.question?.id === questionId) void perform({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId, answer: `choice:${choice.id}` }); }); choices.append(button);
+      const button = document.createElement('button'); button.className = 'command-example'; button.disabled = pendingRequest;
+      const label = document.createElement('strong'); label.textContent = `${index + 1}. ${choice.label}`; button.append(label);
+      button.addEventListener('click', () => { if (questionId && state?.question?.id === questionId) void perform({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId, answer: `choice:${choice.id}` }); });
+      if (choice.detail && (choice.detail.includes('\n') || choice.detail.length > 400)) {
+        const card = document.createElement('div'); card.className = 'choice-detail-card';
+        const details = document.createElement('details'); const summary = document.createElement('summary');
+        summary.textContent = next.question?.key.startsWith('workspace:discard_previous:') ? 'View previous saved tabs' : next.question?.kind === 'workspace' ? 'View proposed saved tabs' : 'View full details';
+        const content = document.createElement('p'); content.textContent = choice.detail;
+        details.append(summary, content); card.append(button, details); choices.append(card);
+      } else {
+        if (choice.detail) { const detail = document.createElement('small'); detail.textContent = choice.detail; button.append(detail); }
+        choices.append(button);
+      }
     });
   }
   choices.querySelectorAll('button').forEach(button => { button.disabled = pendingRequest; });
@@ -192,6 +210,11 @@ async function perform(message: Message): Promise<boolean> {
 }
 document.querySelectorAll<HTMLElement>('[data-pane]').forEach(tab => tab.addEventListener('click', () => showPane(tab.dataset.pane ?? 'control')));
 el('listen').addEventListener('click', () => { void perform({ target: 'background', type: 'TOGGLE_LISTENING' }); });
+el('listen-decision').addEventListener('click', () => { const decisionId = state?.question?.id ?? state?.pending?.request.id; if (decisionId) void perform({ target: 'background', type: 'LISTEN_DECISION', decisionId }); });
+for (const [id, direction] of [['read-decision', 'repeat'], ['previous-decision-page', 'previous'], ['next-decision-page', 'next']] as const) {
+  el(id).addEventListener('click', () => { const decisionId = state?.question?.id ?? state?.pending?.request.id; if (decisionId) void perform({ target: 'background', type: 'READ_DECISION', decisionId, direction }); });
+}
+el('cancel-decision').addEventListener('click', () => { void perform({ target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true }); });
 el('open-panel').addEventListener('click', () => {
   if (state?.currentWindowId === undefined) return;
   // Invoke directly from the click so Chrome retains the user's activation.

@@ -56,12 +56,13 @@ export const aliasSchema = z.object({ id: z.string().uuid(), name: z.string().tr
 export type SiteAlias = z.infer<typeof aliasSchema>;
 const groupColorSchema = z.enum(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
 const workspaceGroupSchema = z.object({ id: z.string().min(1).max(80), title: z.string().max(100), color: groupColorSchema, collapsed: z.boolean() }).strict();
-export const workspaceSchema = z.object({
-  id: z.string().uuid(), name: z.string().trim().min(1).max(60), createdAt: z.number(),
+const workspaceSnapshotObject = z.object({
+  createdAt: z.number(),
   activeTabIndex: z.number().int().min(0).max(99).optional(),
   groups: z.array(workspaceGroupSchema).max(100).optional(),
   tabs: z.array(z.object({ url: webUrl, title: z.string().max(300), pinned: z.boolean(), group: z.string().max(100).optional(), color: groupColorSchema.optional(), groupId: z.string().min(1).max(80).optional() }).strict()).min(1).max(100),
-}).strict().superRefine((workspace, ctx) => {
+}).strict();
+function validateWorkspaceSnapshot(workspace: z.infer<typeof workspaceSnapshotObject>, ctx: z.RefinementCtx): void {
   if (workspace.activeTabIndex !== undefined && workspace.activeTabIndex >= workspace.tabs.length) ctx.addIssue({ code: 'custom', path: ['activeTabIndex'], message: 'The active tab must refer to a saved tab.' });
   const groups = new Map(workspace.groups?.map(group => [group.id, group]) ?? []);
   if (groups.size !== (workspace.groups?.length ?? 0)) ctx.addIssue({ code: 'custom', path: ['groups'], message: 'Every saved group must have a unique ID.' });
@@ -75,8 +76,30 @@ export const workspaceSchema = z.object({
   for (const [index, group] of (workspace.groups ?? []).entries()) {
     if (!workspace.tabs.some(tab => tab.groupId === group.id)) ctx.addIssue({ code: 'custom', path: ['groups', index], message: 'A saved group must contain at least one tab.' });
   }
-});
+}
+export const workspaceSnapshotSchema = workspaceSnapshotObject.superRefine(validateWorkspaceSnapshot);
+export type WorkspaceSnapshot = z.infer<typeof workspaceSnapshotSchema>;
+export const legacyWorkspaceSchema = workspaceSnapshotObject.extend({ id: z.string().uuid(), name: z.string().trim().min(1).max(60) }).strict().superRefine(validateWorkspaceSnapshot);
+export const workspaceSchema = workspaceSnapshotObject.extend({
+  id: z.string().uuid(), name: z.string().trim().min(1).max(60), previous: workspaceSnapshotSchema.optional(),
+}).strict().superRefine(validateWorkspaceSnapshot);
 export type Workspace = z.infer<typeof workspaceSchema>;
+export function workspaceSnapshot(workspace: Workspace): WorkspaceSnapshot {
+  return { createdAt: workspace.createdAt, tabs: structuredClone(workspace.tabs), ...(workspace.groups ? { groups: structuredClone(workspace.groups) } : {}), ...(workspace.activeTabIndex !== undefined ? { activeTabIndex: workspace.activeTabIndex } : {}) };
+}
+/** Plain text shared by workspace replacement choices and portable import reviews. */
+export function workspaceSnapshotDetails(snapshot: WorkspaceSnapshot): string[] {
+  const groups = snapshot.groups ?? [];
+  return [
+    `Active tab: ${(snapshot.activeTabIndex ?? 0) + 1}`,
+    ...groups.map((group, index) => `Group ${index + 1}: ${group.title || 'Untitled group'} · ${group.color} · ${group.collapsed ? 'Collapsed' : 'Expanded'}`),
+    ...snapshot.tabs.map((tab, index) => {
+      const groupIndex = groups.findIndex(group => group.id === tab.groupId);
+      const group = groupIndex >= 0 ? ` · Group ${groupIndex + 1}` : tab.group ? ` · Group: ${tab.group} · ${tab.color ?? 'grey'}` : '';
+      return `Tab ${index + 1}: ${tab.title || 'Untitled tab'} · ${tab.url} · ${tab.pinned ? 'Pinned' : 'Unpinned'}${group}`;
+    }),
+  ];
+}
 export interface Library { aliases: SiteAlias[]; workspaces: Workspace[]; suggestions: SiteAlias[]; }
 export const aliasAsSite = (alias: SiteAlias): Site => ({ id: alias.id, name: alias.name, aliases: [normalizeName(alias.name)], url: alias.url, ...(alias.searchUrl ? { searchUrl: alias.searchUrl } : {}), path: new URL(alias.url).pathname });
 export function siteMatchesUrl(site: Site, value: string): boolean {

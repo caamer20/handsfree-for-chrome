@@ -31,6 +31,15 @@ it.each([
   ['Move the Research group to a new window', 'group_action', { operation: 'move_window', name: 'Research' }],
   ['Save this workspace', 'workspace_action', { operation: 'save' }],
   ['Restore my work tabs', 'workspace_action', { operation: 'restore', name: 'work' }],
+  ['Update my Research workspace', 'workspace_action', { operation: 'update', name: 'Research' }],
+  ['Update Research workspace from this window', 'workspace_action', { operation: 'update', name: 'Research', scope: 'window' }],
+  ['Update Research workspace with these tabs', 'workspace_action', { operation: 'update', name: 'Research', scope: 'selection' }],
+  ['Recover my Research workspace', 'workspace_action', { operation: 'recover', name: 'Research' }],
+  ['Restore the previous saved version of Research workspace', 'workspace_action', { operation: 'recover', name: 'Research' }],
+  ['Rename Research workspace to Physics', 'workspace_action', { operation: 'rename', name: 'Research', new_name: 'Physics' }],
+  ['Rename my Research workspace', 'workspace_action', { operation: 'rename', name: 'Research' }],
+  ['Discard previous version of Research workspace', 'workspace_action', { operation: 'discard_previous', name: 'Research' }],
+  ['Discard the previous saved version of my Research workspace', 'workspace_action', { operation: 'discard_previous', name: 'Research' }],
   ['Show duplicate tabs', 'duplicates_action', { operation: 'show' }],
   ['What can I say here?', 'help', {}],
   ['Save this for later', 'reading_action', { operation: 'save' }],
@@ -39,6 +48,24 @@ it.each([
   ['Set volume to 40 percent', 'page_action', { operation: 'media_volume', value: 40, relative: false }],
 ])('supports the promised phrase: %s', (text, action, params) => {
   expect(parseCommand(text as string)?.at(-1)).toEqual({ action, params });
+});
+it.each(['Notes then close all tabs', 'Do not close tabs', 'Physics and open a new tab', 'Read the choices; close this tab', 'Physics please!'])('keeps a workspace rename literal: %s', new_name => {
+  expect(parseCommand(`rename Research workspace to ${new_name}`)).toEqual([{ action: 'workspace_action', params: { operation: 'rename', name: 'Research', new_name } }]);
+});
+it('keeps quoted workspace names literal and rejects an empty rename tail', () => {
+  expect(parseCommand('rename "Research and notes" workspace to "Plan then close all tabs"')).toEqual([{ action: 'workspace_action', params: { operation: 'rename', name: 'Research and notes', new_name: 'Plan then close all tabs' } }]);
+  expect(() => parseCommand('rename Research workspace to ""')).toThrow();
+});
+it('preserves literal rename tails after another command and polite framing', () => {
+  expect(parseCommand('mute this tab then please rename Research workspace to Notes then close this tab')).toEqual([
+    { action: 'mute_tab', params: { mute: true } },
+    { action: 'workspace_action', params: { operation: 'rename', name: 'Research', new_name: 'Notes then close this tab' } },
+  ]);
+  expect(parseCommand('Could you mute this tab then rename Research workspace to Physics please!')).toEqual([
+    { action: 'mute_tab', params: { mute: true } },
+    { action: 'workspace_action', params: { operation: 'rename', name: 'Research', new_name: 'Physics please!' } },
+  ]);
+  expect(parseCommand('type hello then rename Research workspace to Physics please!')).toEqual([{ action: 'page_action', params: { operation: 'type', text: 'hello then rename Research workspace to Physics please!' } }]);
 });
 it('keeps pronouns explicit when moving, muting, and closing plural targets', () => {
   expect(parseCommand('move it to a new window')?.[0]).toMatchObject({ action: 'reference_tabs', params: { reference: 'it' } });

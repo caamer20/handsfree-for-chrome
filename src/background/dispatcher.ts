@@ -11,22 +11,26 @@ export interface DispatchContext { tabId: number; windowId: number; tabIds?: num
 export interface DispatchResult { text: string; context: DispatchContext; }
 export async function dispatchMacro(input: Macro, context: DispatchContext, env?: ExecutionEnvironment): Promise<DispatchResult> {
   const macro = macroSchema.parse(input); // Validate every URL before opening the first site.
-  let opened = 0;
+  const opened: chrome.tabs.Tab[] = [];
   let first = context;
   try {
     for (const url of macro.urls) {
       checkCancelled(env?.signal);
-      await env?.onProgress?.({ index: opened, status: 'running', context });
-      const tab = await chrome.tabs.create({ url, windowId: context.windowId, active: opened === 0 });
-      await env?.onProgress?.({ index: opened, status: 'completed', context, result: `Opened ${url}` });
-      if (opened === 0 && tab.id !== undefined) first = { tabId: tab.id, windowId: tab.windowId };
-      if (env) { rememberTargets(env, [tab]); markIrreversible(env); }
-      opened++;
+      const index = opened.length;
+      await env?.onProgress?.({ index, status: 'running', context });
+      checkCancelled(env?.signal);
+      const tab = await chrome.tabs.create({ url, windowId: context.windowId, active: index === 0 });
+      if (env) markIrreversible(env);
+      if (tab.id === undefined) throw new CommandFailure('unknown-outcome', 'Chrome did not identify the new tab. Check open tabs before trying again; another site may have opened.');
+      if (!opened.length) first = { tabId: tab.id, windowId: tab.windowId };
+      opened.push(tab);
+      if (env) rememberTargets(env, opened);
+      await env?.onProgress?.({ index, status: 'completed', context: { tabId: tab.id, windowId: tab.windowId }, result: `Opened ${url}` });
     }
   } catch (error) {
-    throw new Error(`${macro.name}: opened ${opened} of ${macro.urls.length} sites. Stopped: ${error instanceof Error ? error.message : 'Chrome could not open the next site.'}`);
+    throw new Error(`${macro.name}: opened ${opened.length} of ${macro.urls.length} sites. Stopped: ${error instanceof Error ? error.message : 'Chrome could not open the next site.'}`);
   }
-  return { text: `${macro.name} · Opened ${opened} site${opened === 1 ? '' : 's'}`, context: first };
+  return { text: `${macro.name} · Opened ${opened.length} site${opened.length === 1 ? '' : 's'}`, context: first };
 }
 export function requiresReview(actions: ChromeAction[], source: 'grammar' | 'model', reviewAllAi = false): boolean {
   return (source === 'model' && (reviewAllAi || actions.some(a => a.action === 'close_tab'))) || actions.some(a => a.action === 'close_tab' && a.params.target !== undefined && a.params.target !== 'current');

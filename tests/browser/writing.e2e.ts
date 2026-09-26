@@ -86,3 +86,74 @@ test('opts into spoken punctuation through Settings and keeps literal escapes', 
   await message(control, { target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
   await engine.detach();
 });
+
+test('places the caret around paragraph text and refuses a field changed during beforeinput', async ({ context, control, extensionId }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Paragraph editing</title><div contenteditable="true" aria-label="Draft"><p>First <strong>line</strong></p><p>Second line</p></div><label>Notes<textarea>original</textarea></label><input aria-label="Other">' }));
+  const page = await context.newPage(); await page.goto('https://handsfree.test/paragraphs');
+  await activateExtension(page, extensionId); await page.bringToFront();
+  await run(control, 'focus the Draft field');
+  await run(control, 'move the cursor before text Second');
+  expect(await page.evaluate(() => [getSelection()?.anchorNode?.textContent, getSelection()?.anchorOffset, getSelection()?.isCollapsed])).toEqual(['Second line', 0, true]);
+  await run(control, 'move the cursor after text First');
+  expect(await page.evaluate(() => [getSelection()?.anchorNode?.textContent, getSelection()?.anchorOffset])).toEqual(['First ', 5]);
+  await run(control, 'type !'); await expect(page.locator('p').first()).toHaveText('First! line');
+  await run(control, 'focus the Notes field');
+  await page.locator('textarea').evaluate(el => {
+    el.addEventListener('beforeinput', () => {
+      (el as HTMLTextAreaElement).value = 'manual update'; (el as HTMLTextAreaElement).readOnly = true;
+      document.querySelector<HTMLInputElement>('input')!.focus();
+    }, { once: true });
+  });
+  await run(control, 'type must not be entered', 'error');
+  await expect(page.locator('textarea')).toHaveValue('manual update');
+  await expect(page.locator('input')).toBeFocused();
+});
+
+test('renders dictated line breaks and restores original paragraph nodes and listeners on undo', async ({ context, control, extensionId }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Multiline dictation</title><style>[contenteditable]{font:16px/20px monospace;border:1px solid;width:400px}p{margin:0}</style><div contenteditable="true" aria-label="Draft"><p>Hello <strong>bright</strong></p><p>new <em>world</em></p></div>' }));
+  const engine = await installSpeechFixture(control);
+  const page = await context.newPage(); await page.goto('https://handsfree.test/multiline');
+  await activateExtension(page, extensionId); await page.bringToFront();
+  const field = page.locator('[contenteditable]'); const markup = await field.innerHTML();
+  const original = await field.locator('strong').elementHandle();
+  await original!.evaluate(node => node.addEventListener('click', () => { document.body.dataset.originalListener = 'fired'; }));
+  await run(control, 'focus the Draft field'); await run(control, 'select all text');
+  await message(control, { target: 'background', type: 'MICROPHONE_READY' });
+  await message(control, { target: 'background', type: 'TOGGLE_LISTENING' });
+  await emitSpeech(engine, 'start dictation'); await expect.poll(async () => !!(await state(control)).dictation).toBe(true);
+  await emitSpeech(engine, 'one new line two new paragraph three new line');
+  await expect(field.locator('br')).toHaveCount(5);
+  const geometry = await field.evaluate(element => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT); const lines: { text: string; top: number }[] = [];
+    for (let node; (node = walker.nextNode());) { if (!node.textContent) continue; const range = document.createRange(); range.selectNodeContents(node); lines.push({ text: node.textContent, top: range.getBoundingClientRect().top }); }
+    return { height: element.getBoundingClientRect().height, lines };
+  });
+  expect(geometry.lines.map(line => line.text)).toEqual(['one', 'two', 'three']);
+  expect(geometry.lines[1]!.top - geometry.lines[0]!.top).toBe(20);
+  expect(geometry.lines[2]!.top - geometry.lines[1]!.top).toBe(40);
+  expect(geometry.height).toBeGreaterThanOrEqual(100);
+  await emitSpeech(engine, 'scratch that'); await expect(field).toHaveJSProperty('innerHTML', markup);
+  expect(await original!.evaluate(node => node.isConnected && document.querySelector('strong') === node)).toBe(true);
+  await original!.evaluate(node => (node as HTMLElement).click());
+  await expect(page.locator('body')).toHaveAttribute('data-original-listener', 'fired');
+  await emitSpeech(engine, 'stop dictation'); await expect.poll(async () => (await state(control)).dictation).toBeNull();
+  await message(control, { target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true });
+  await engine.detach();
+});
+
+test('refuses dictation undo after the page reuses an original paragraph elsewhere', async ({ context, control, extensionId }) => {
+  await context.route('https://handsfree.test/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Reused editor nodes</title><div contenteditable="true" aria-label="Draft"><p>first</p><p id="reused">second</p><p>third</p></div><aside></aside>' }));
+  const engine = await installSpeechFixture(control); const page = await context.newPage(); await page.goto('https://handsfree.test/reused-editor');
+  await activateExtension(page, extensionId); await page.bringToFront();
+  const original = await page.locator('#reused').elementHandle();
+  await run(control, 'focus the Draft field'); await run(control, 'select all text');
+  await message(control, { target: 'background', type: 'MICROPHONE_READY' }); await message(control, { target: 'background', type: 'TOGGLE_LISTENING' });
+  await emitSpeech(engine, 'start dictation'); await expect.poll(async () => !!(await state(control)).dictation).toBe(true);
+  await emitSpeech(engine, 'replacement'); await expect(page.locator('[contenteditable]')).toHaveText('replacement');
+  await original!.evaluate(node => { document.querySelector('aside')!.append(node); node.textContent = 'Reused page content'; });
+  await emitSpeech(engine, 'scratch that'); await expect.poll(async () => (await state(control)).dictation).toBeNull();
+  await expect(page.locator('[contenteditable]')).toHaveText('replacement'); await expect(page.locator('aside')).toHaveText('Reused page content');
+  expect(await original!.evaluate(node => node.parentElement === document.querySelector('aside'))).toBe(true);
+  await expect.poll(async () => (await state(control)).hud.phase).toBe('error');
+  await message(control, { target: 'background', type: 'INTERRUPT_COMMAND', stopListening: true }); await engine.detach();
+});

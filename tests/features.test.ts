@@ -1,12 +1,13 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { dispatchActions } from '../src/background/dispatcher';
+import { dispatchActions, dispatchMacro } from '../src/background/dispatcher';
 import { parseCommand } from '../src/common/command-parser';
 import { defaultSettings } from '../src/common/schema';
-import { ChoiceRequired, ReviewRequired, emptyConversation, type Question } from '../src/common/conversation';
+import { ChoiceRequired, ReviewRequired, emptyConversation, type Question, type TargetContext } from '../src/common/conversation';
 import { contextAfterClose, finalizeUndo, type ExecutionEnvironment } from '../src/background/execution';
 import { answerChoice } from '../src/background/choices';
 import { getLibrary, refreshSiteSuggestions } from '../src/background/library-store';
 import type { ProgressEvent } from '../src/common/progress';
+import { decisionReadback } from '../src/common/decision-readback';
 
 let open: chrome.tabs.Tab[];
 let groups: chrome.tabGroups.TabGroup[];
@@ -21,7 +22,7 @@ const tabs = { query: vi.fn(), get: vi.fn(), update: vi.fn(), create: vi.fn(), r
 const windows = { update: vi.fn(), create: vi.fn() };
 const tabGroups = { query: vi.fn(), get: vi.fn(), update: vi.fn(), move: vi.fn() };
 const reindex = (windowId: number): void => { open.filter(tab => tab.windowId === windowId).sort((a, b) => a.index - b.index).forEach((tab, index) => { tab.index = index; }); };
-async function run(text: string, context = initial): Promise<void> {
+async function run(text: string, context: TargetContext = initial): Promise<void> {
   env.operationId = crypto.randomUUID(); env.transcript = text;
   await dispatchActions(parseCommand(text), context, env); await finalizeUndo(env);
 }
@@ -96,6 +97,31 @@ it('asks for a category default and resumes with a chosen app', async () => {
   expect(question).toBeInstanceOf(ChoiceRequired); expect(tabs.create).not.toHaveBeenCalled();
   env.overrides[question!.key] = question!.choices.find(choice => choice.id === 'spotify')!;
   await dispatchActions(question!.remaining, question!.context!, env); expect(tabs.create).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://open.spotify.com/' }));
+});
+it('uses a chosen website routine ID even when display names match', async () => {
+  env.macros = ['Start morning work', 'Start morning home'].map(phrase => ({ id: crypto.randomUUID(), name: 'Morning', phrase, urls: ['https://saved.example/'] }));
+  storage.macros = structuredClone(env.macros);
+  let question: ChoiceRequired | undefined;
+  try { await run('add this site to Morning'); } catch (error) { question = error as ChoiceRequired; }
+  expect(question).toBeInstanceOf(ChoiceRequired);
+  expect(question!.choices.map(choice => choice.detail)).toEqual(['Say “Start morning work”', 'Say “Start morning home”']);
+  env.overrides[question!.key] = question!.choices[1]!;
+  await dispatchActions(question!.remaining, question!.context!, env);
+  expect(storage.macros).toMatchObject([{ urls: ['https://saved.example/'] }, { urls: ['https://saved.example/', 'https://example.com/'] }]);
+});
+it('refuses a deleted named choice without falling back to a same-name routine', async () => {
+  env.macros = [{ id: crypto.randomUUID(), name: 'Morning', phrase: 'Start morning work', urls: ['https://saved.example/'] }];
+  env.overrides['macro:morning'] = { id: 'deleted', label: 'Morning', value: crypto.randomUUID() };
+  await expect(run('add this site to Morning')).rejects.toThrow('no longer saved');
+  expect(storage.macros).toBeUndefined();
+});
+it('keeps all website-routine tabs for plural follow-ups and the first for active context', async () => {
+  const result = await dispatchMacro({ id: crypto.randomUUID(), name: 'Daily sites', phrase: 'Start daily sites', urls: ['https://one.example/', 'https://two.example/', 'https://three.example/'] }, initial, env);
+  expect(result.context).toEqual({ tabId: 100, windowId: 10 });
+  expect(env.state.targets.map(tab => tab.id)).toEqual([100, 101, 102]);
+  await run('mute them');
+  expect([100, 101, 102].map(id => get(id).mutedInfo?.muted)).toEqual([true, true, true]);
+  expect(get(1).mutedInfo?.muted).toBe(false);
 });
 it('honors a personal alias, chosen default, and website search URL', async () => {
   await run('call this site my work dashboard'); env.library = await getLibrary();
@@ -579,4 +605,207 @@ it('waits for a field in the same document and stops as soon as it appears', asy
     expect(calls.filter(([options]) => 'func' in options)).toHaveLength(2);
     expect(tabs.update).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
+});
+async function workspaceQuestion(text: string, context: TargetContext = initial): Promise<ChoiceRequired> {
+  try { await run(text, context); } catch (error) { expect(error).toBeInstanceOf(ChoiceRequired); return error as ChoiceRequired; }
+  throw new Error('Expected a workspace replacement question');
+}
+async function answerWorkspace(question: ChoiceRequired, index = 0): Promise<void> {
+  env.overrides[question.key] = question.choices[index]!;
+  await dispatchActions(question.remaining, question.context!, env);
+}
+it('reviews same-name workspace saves with exact replacement counts and keeps one previous snapshot', async () => {
+  await run('save this workspace as Research'); const original = structuredClone((await getLibrary()).workspaces[0]!);
+  open = open.filter(tab => tab.id !== 3);
+  const question = await workspaceQuestion('save this workspace as research');
+  expect(question.prompt).toContain('(3 saved tabs) with these 2 tabs');
+  expect((await getLibrary()).workspaces[0]).toEqual(original);
+  await answerWorkspace(question);
+  const updated = (await getLibrary()).workspaces[0]!;
+  expect(updated.id).toBe(original.id); expect(updated.name).toBe('Research'); expect(updated.tabs).toHaveLength(2);
+  expect(updated.previous?.tabs).toEqual(original.tabs); expect(updated.previous).not.toHaveProperty('previous');
+});
+it('can keep an existing workspace without changing its saved or previous version', async () => {
+  await run('save this workspace as Research'); const before = structuredClone(storage);
+  open = open.filter(tab => tab.id !== 3);
+  await answerWorkspace(await workspaceQuestion('update Research workspace'), 1);
+  expect(storage).toEqual(before);
+});
+it('recovers a reviewed previous workspace version without opening or closing tabs', async () => {
+  await run('save this workspace as Research');
+  open = open.filter(tab => tab.id !== 3);
+  await answerWorkspace(await workspaceQuestion('update Research workspace'));
+  const question = await workspaceQuestion('restore previous version of Research workspace');
+  expect(question.prompt).toContain('(3 tabs), replacing the current 2 saved tabs');
+  expect((await getLibrary()).workspaces[0]!.tabs).toHaveLength(2);
+  await answerWorkspace(question);
+  const recovered = (await getLibrary()).workspaces[0]!;
+  expect(recovered.tabs).toHaveLength(3); expect(recovered.previous?.tabs).toHaveLength(2); expect(recovered.previous).not.toHaveProperty('previous');
+  expect(tabs.create).not.toHaveBeenCalled(); expect(tabs.remove).not.toHaveBeenCalled();
+});
+it('updates explicitly selected tabs and preserves their active tab and group metadata in history', async () => {
+  groups = [{ id: 6, title: 'Sources', color: 'blue', collapsed: false, windowId: 10 }]; get(2).groupId = 6;
+  await run('save this workspace as Research');
+  const original = (await getLibrary()).workspaces[0]!;
+  await answerWorkspace(await workspaceQuestion(`update ${original.id} workspace`, { ...initial, tabIds: [2, 3] }));
+  const updated = (await getLibrary()).workspaces[0]!;
+  expect(updated.tabs.map(tab => tab.url)).toEqual([get(2).url, get(3).url]); expect(updated.groups?.[0]?.title).toBe('Sources');
+  expect(updated.previous?.activeTabIndex).toBe(0); expect(updated.previous?.groups).toEqual(original.groups);
+});
+it.each(['url', 'navigation pending', 'pin', 'order', 'window', 'active', 'new tab', 'group'] as const)('refuses a workspace update after the proposed source changes: %s', async change => {
+  groups = [{ id: 6, title: 'Sources', color: 'blue', collapsed: false, windowId: 10 }]; get(2).groupId = 6;
+  await run('save this workspace as Research'); get(1).title = 'Reviewed source title'; const question = await workspaceQuestion('update Research workspace'); const before = structuredClone(storage);
+  if (change === 'url') get(2).url = 'https://changed.example/';
+  else if (change === 'navigation pending') get(2).pendingUrl = 'https://pending.example/';
+  else if (change === 'pin') get(2).pinned = true;
+  else if (change === 'order') { get(2).index = 2; get(3).index = 1; }
+  else if (change === 'window') get(2).windowId = 20;
+  else if (change === 'active') { get(1).active = false; get(2).active = true; }
+  else if (change === 'new tab') open.push(make(5, 'Added after review', 'https://new.example/', 3));
+  else groups[0]!.collapsed = true;
+  await expect(answerWorkspace(question)).rejects.toThrow('source tabs changed');
+  expect(storage).toEqual(before);
+});
+it.each(['update', 'recover'] as const)('refuses a stale saved workspace approval for %s', async operation => {
+  await run('save this workspace as Research'); get(2).title = 'Second version'; await answerWorkspace(await workspaceQuestion('update Research workspace'));
+  if (operation === 'update') get(2).title = 'Third version';
+  const question = await workspaceQuestion(`${operation} Research workspace`);
+  (storage.library as typeof env.library).workspaces[0]!.tabs[0]!.title = 'Newer saved title';
+  const before = structuredClone(storage);
+  await expect(answerWorkspace(question)).rejects.toThrow('saved workspace changed'); expect(storage).toEqual(before);
+});
+it('does not recreate a deleted workspace when answering a save-collision review', async () => {
+  await run('save this workspace as Research'); get(2).title = 'Reviewed source title'; const question = await workspaceQuestion('save this workspace as Research');
+  (storage.library as typeof env.library).workspaces = [];
+  await expect(answerWorkspace(question)).rejects.toThrow('saved workspace changed'); expect((await getLibrary()).workspaces).toEqual([]);
+});
+it('requires an existing workspace for update and a previous version for recovery', async () => {
+  await expect(run('update Missing workspace')).rejects.toThrow('No workspace');
+  await run('save this workspace as Research');
+  await expect(run('recover Research workspace')).rejects.toThrow('no previous saved version');
+});
+it('saves only one chosen current tab when answering which tabs to save', async () => {
+  const question = await workspaceQuestion('save these tabs as One selected tab');
+  expect(question.prompt).toContain('current tab or all tabs');
+  await answerWorkspace(question);
+  expect((await getLibrary()).workspaces[0]!.tabs.map(tab => tab.url)).toEqual([get(1).url]);
+});
+it('saves the actual highlighted selection and honors explicit whole-window updates', async () => {
+  get(1).highlighted = false; get(2).highlighted = true; get(3).highlighted = true;
+  await run('save these tabs as Selected');
+  expect((await getLibrary()).workspaces[0]!.tabs.map(tab => tab.url)).toEqual([get(2).url, get(3).url]);
+  await answerWorkspace(await workspaceQuestion('update Selected workspace from this window', { ...initial, tabIds: [2, 3] }));
+  expect((await getLibrary()).workspaces[0]!.tabs).toHaveLength(3);
+});
+it('keeps the useful previous version when updating an unchanged workspace', async () => {
+  await run('save this workspace as Research'); open = open.filter(tab => tab.id !== 3);
+  await answerWorkspace(await workspaceQuestion('update Research workspace')); const before = structuredClone(storage);
+  await run('update Research workspace'); expect(storage).toEqual(before);
+  expect((await getLibrary()).workspaces[0]!.previous?.tabs).toHaveLength(3);
+});
+it('reviews full proposed tab addresses, pin state, active tab and separate group metadata', async () => {
+  await run('save this workspace as Research');
+  groups = [{ id: 6, title: 'Research <script>', color: 'purple', collapsed: true, windowId: 10 }, { id: 7, title: 'Research <script>', color: 'blue', collapsed: false, windowId: 10 }];
+  get(1).pinned = true; get(2).groupId = 6; get(3).groupId = 7; get(1).active = false; get(3).active = true;
+  get(2).url = `https://reference.example/${'a'.repeat(900)}?private=value`; get(2).title = 'A full <script> literal title';
+  const question = await workspaceQuestion('update Research workspace');
+  expect(question.choices[0]!.detail).toBe([
+    'Proposed saved version:', 'Active tab: 3',
+    'Group 1: Research <script> · purple · Collapsed', 'Group 2: Research <script> · blue · Expanded',
+    `Tab 1: Welcome · ${get(1).url} · Pinned`,
+    `Tab 2: A full <script> literal title · ${get(2).url} · Unpinned · Group 1`,
+    `Tab 3: YouTube · ${get(3).url} · Unpinned · Group 2`,
+  ].join('\n'));
+  const spokenQuestion: Question = { id: crypto.randomUUID(), prompt: question.prompt, choices: question.choices, kind: 'workspace', key: question.key, request: { ...initial, id: crypto.randomUUID(), startedAt: Date.now() }, context: initial, actions: question.remaining, overrides: {}, at: Date.now() };
+  const first = decisionReadback(spokenQuestion, null); const pages = Array.from({ length: first.totalPages }, (_, page) => decisionReadback(spokenQuestion, null, page));
+  expect(pages.every(page => page.segments.every(segment => segment.length <= 400))).toBe(true);
+  expect(pages.map(page => page.text).join('\n')).toContain('?private=value');
+  expect(pages.map(page => page.text).join('\n')).toContain('Unpinned · Group 2');
+});
+it.each(['navigate', 'close', 'move', 'regroup'] as const)('rejects source divergence during the group metadata wait: %s', async change => {
+  await run('save this workspace as Research'); get(1).title = 'Reviewed source';
+  const question = await workspaceQuestion('update Research workspace'); const before = structuredClone(storage);
+  let entered!: () => void; let release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  tabGroups.query.mockImplementationOnce(async () => { entered(); await waiting; return structuredClone(groups); });
+  const rejected = expect(answerWorkspace(question)).rejects.toThrow('source tabs changed while capturing');
+  await started;
+  if (change === 'navigate') get(2).url = 'https://changed-during-query.example/';
+  else if (change === 'close') open = open.filter(tab => tab.id !== 2);
+  else if (change === 'move') get(2).windowId = 20;
+  else { groups.push({ id: 8, title: 'New group', color: 'red', collapsed: false, windowId: 10 }); get(2).groupId = 8; }
+  release(); await rejected; expect(storage).toEqual(before);
+});
+it('does not save a reviewed workspace when Stop arrives during source capture', async () => {
+  await run('save this workspace as Research'); get(1).title = 'Reviewed source';
+  const question = await workspaceQuestion('update Research workspace'); const before = structuredClone(storage);
+  const controller = new AbortController(); env.signal = controller.signal;
+  let entered!: () => void; let release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  tabGroups.query.mockImplementationOnce(async () => { entered(); await waiting; return structuredClone(groups); });
+  const rejected = expect(answerWorkspace(question)).rejects.toThrow('cancelled');
+  await started; controller.abort(); release(); await rejected; expect(storage).toEqual(before);
+});
+async function workspaceWithHistory(): Promise<void> {
+  await run('save this workspace as Research'); open = open.filter(tab => tab.id !== 3);
+  await answerWorkspace(await workspaceQuestion('update Research workspace'));
+}
+it('renames saved workspaces using inline literal names and preserves both snapshots', async () => {
+  await workspaceWithHistory(); const saved = (await getLibrary()).workspaces[0]!;
+  await run('rename Research workspace to Notes then close all tabs');
+  expect((await getLibrary()).workspaces).toEqual([{ ...saved, name: 'Notes then close all tabs' }]);
+  expect(tabs.remove).not.toHaveBeenCalled(); expect(tabs.create).not.toHaveBeenCalled();
+});
+it('never executes command words in the name of a later rename step', async () => {
+  await workspaceWithHistory();
+  await run('mute this tab then rename Research workspace to Notes then close this tab');
+  expect(get(1).mutedInfo?.muted).toBe(true);
+  expect((await getLibrary()).workspaces[0]!.name).toBe('Notes then close this tab'); expect(tabs.remove).not.toHaveBeenCalled();
+});
+it('asks for a literal name and rejects saved state changes while that question is open', async () => {
+  await workspaceWithHistory(); const saved = (await getLibrary()).workspaces[0]!;
+  const question = await workspaceQuestion(`rename ${saved.id} workspace`); expect(question.kind).toBe('name');
+  (storage.library as typeof env.library).workspaces[0]!.previous!.tabs[0]!.title = 'Newer history'; const before = structuredClone(storage);
+  env.overrides[question.key] = { id: 'name', label: 'Physics', value: 'Physics' };
+  await expect(dispatchActions(question.remaining, question.context!, env)).rejects.toThrow('saved workspace changed'); expect(storage).toEqual(before);
+});
+it('uses a freeform rename answer as data and consumes its expected snapshot', async () => {
+  await workspaceWithHistory(); const saved = (await getLibrary()).workspaces[0]!;
+  const question = await workspaceQuestion(`rename ${saved.id} workspace`);
+  env.overrides[question.key] = { id: 'name', label: 'Do not close tabs', value: 'Do not close tabs' };
+  await dispatchActions(question.remaining, question.context!, env);
+  expect((await getLibrary()).workspaces).toEqual([{ ...saved, name: 'Do not close tabs' }]);
+  expect(Object.keys(env.overrides).filter(key => key.includes('workspace:rename:'))).toEqual([]); expect(tabs.remove).not.toHaveBeenCalled();
+});
+it('keeps exact workspace names containing workspace from selecting a shorter saved name', async () => {
+  await run('save this workspace as Physics'); await run('save this workspace as Physics workspace');
+  await run('rename Physics workspace workspace to Notes');
+  expect((await getLibrary()).workspaces.map(workspace => workspace.name)).toEqual(['Physics', 'Notes']);
+});
+it('reviews exact previous contents, allows Keep, and discards only after an explicit choice', async () => {
+  await workspaceWithHistory(); const saved = structuredClone((await getLibrary()).workspaces[0]!);
+  const first = await workspaceQuestion('discard previous version of Research workspace');
+  expect(first.prompt).toContain('(3 tabs)'); expect(first.prompt).toContain('2 current saved tabs');
+  expect(first.choices[0]!.detail).toContain('Tab 3: YouTube · https://www.youtube.com/ · Unpinned');
+  expect((await getLibrary()).workspaces[0]).toEqual(saved);
+  await answerWorkspace(first, 1); expect((await getLibrary()).workspaces[0]).toEqual(saved);
+  await answerWorkspace(await workspaceQuestion('discard the previous saved version of Research workspace'));
+  const expected = { ...saved }; delete expected.previous;
+  expect((await getLibrary()).workspaces[0]).toEqual(expected); expect(tabs.remove).not.toHaveBeenCalled(); expect(tabs.create).not.toHaveBeenCalled();
+});
+it('refuses to discard a previous version that changed after review', async () => {
+  await workspaceWithHistory(); const question = await workspaceQuestion('discard previous version of Research workspace');
+  (storage.library as typeof env.library).workspaces[0]!.previous!.tabs[0]!.url = 'https://newer-private.example/'; const before = structuredClone(storage);
+  await expect(answerWorkspace(question)).rejects.toThrow('saved workspace changed'); expect(storage).toEqual(before);
+});
+it('does not discard history when Stop has arrived before the choice resumes', async () => {
+  await workspaceWithHistory(); const question = await workspaceQuestion('discard previous version of Research workspace'); const before = structuredClone(storage);
+  const controller = new AbortController(); env.signal = controller.signal; controller.abort();
+  await expect(answerWorkspace(question)).rejects.toThrow('cancelled'); expect(storage).toEqual(before);
+});
+it('explains when a workspace has no previous saved version to discard', async () => {
+  await run('save this workspace as Research'); const before = structuredClone(storage);
+  await expect(run('discard previous version of Research workspace')).rejects.toThrow('no previous saved version'); expect(storage).toEqual(before);
 });

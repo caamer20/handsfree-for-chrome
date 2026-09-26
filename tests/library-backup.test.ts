@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { exportLibraryBackup, LIBRARY_BACKUP_MAX_BYTES, mergeLibraryBackup, parseLibraryBackup, previewLibraryBackup, type LibraryBackup, type LibraryBackupState } from '../src/common/library-backup';
 import { exportSavedLibrary, importSavedLibrary, previewSavedLibraryImport } from '../src/background/library-backup';
 import { saveRoutine } from '../src/background/routine-store';
+import { saveAlias, saveWorkspace } from '../src/background/library-store';
+import { workspaceSnapshot } from '../src/common/library';
 
 const id = (value: number): string => `00000000-0000-4000-8000-${String(value).padStart(12, '0')}`;
 const empty = (): LibraryBackupState => ({ library: { aliases: [], workspaces: [], suggestions: [] }, macros: [], routines: [] });
@@ -23,6 +25,7 @@ const total = (counts: Record<string, number>): number => Object.values(counts).
 
 it('exports only portable library collections and round-trips their visible content', () => {
   const source = sample(); const backup = parseLibraryBackup(exportLibraryBackup(source));
+  expect(backup.version).toBe(2);
   expect(Object.keys(backup).sort()).toEqual(['aliases', 'format', 'macros', 'routines', 'version', 'workspaces']);
   expect(JSON.stringify(backup)).not.toContain('Private suggestion');
   const result = mergeLibraryBackup(JSON.stringify(backup), empty());
@@ -146,7 +149,28 @@ it('gives clear errors for empty, malformed, and unsupported backup versions', (
   expect(() => exportLibraryBackup(empty())).toThrow('library is empty');
   expect(() => parseLibraryBackup(text({}))).toThrow('contains no');
   expect(() => parseLibraryBackup('{invalid')).toThrow('not valid JSON');
-  expect(() => parseLibraryBackup(JSON.stringify({ ...envelope({ aliases: sample().library.aliases }), version: 2 }))).toThrow('Invalid library backup');
+  expect(() => parseLibraryBackup(JSON.stringify({ ...envelope({ aliases: sample().library.aliases }), version: 3 }))).toThrow('Unsupported library backup version');
+});
+it('imports strict version 1 workspaces while version 2 preserves one validated previous version', () => {
+  const source = sample(); const workspace = source.library.workspaces[0]!;
+  expect(parseLibraryBackup(text({ workspaces: [workspace] })).version).toBe(1);
+  workspace.previous = { ...workspaceSnapshot(workspace), tabs: [{ title: 'Old <script> literal', url: 'https://old.example/', pinned: false }], groups: undefined, activeTabIndex: 0 };
+  expect(() => parseLibraryBackup(text({ workspaces: [workspace] }))).toThrow('Unrecognized key');
+  const json = exportLibraryBackup(source); const imported = mergeLibraryBackup(json, empty());
+  expect(imported.state.library.workspaces[0]!.previous).toEqual(workspace.previous);
+  expect(imported.preview.entries.find(entry => entry.kind === 'workspaces')?.details).toContain('Previous saved version: 1 tabs');
+  expect(imported.preview.entries.find(entry => entry.kind === 'workspaces')?.details).toContain('Previous version · Tab 1: Old <script> literal · https://old.example/ · Unpinned');
+  expect(previewLibraryBackup(json, imported.state).skipped.workspaces).toBe(1);
+});
+it('rejects unsafe, oversized, recursive or foreign group references in previous saved versions', () => {
+  const base = sample().library.workspaces[0]!; const previous = workspaceSnapshot(base);
+  const invalid = [
+    { ...previous, tabs: [{ title: 'Unsafe', url: 'javascript:alert(1)', pinned: false }] },
+    { ...previous, tabs: Array.from({ length: 101 }, () => previous.tabs[0]!) },
+    { ...previous, previous },
+    { ...previous, tabs: [{ ...previous.tabs[0], pinned: false, groupId: 'current-only' }] },
+  ];
+  for (const old of invalid) expect(() => parseLibraryBackup(JSON.stringify({ ...envelope(), version: 2, workspaces: [{ ...base, previous: old }] }))).toThrow();
 });
 
 let storage: Record<string, unknown>;
@@ -217,6 +241,14 @@ it('imports all collections atomically with one storage write and preserves unre
   expect(result).toEqual(preview); expect(set).toHaveBeenCalledOnce();
   expect(Object.keys(set.mock.calls[0]![0]).sort()).toEqual(['library', 'macros', 'routines']);
   expect(storage.settings).toEqual(beforeSettings); expect(storage.log).toEqual(['private activity']); expect(storage.voiceSetup).toEqual({ done: true });
+});
+it('serializes a backup import with concurrent alias and workspace saves without losing either', async () => {
+  const imported = sample(); const alias = { id: id(80), name: 'Concurrent alias', url: 'https://concurrent.example/', searchUrl: '' };
+  const workspace = { ...sample().library.workspaces[0]!, id: id(81), name: 'Concurrent workspace' };
+  await Promise.all([importSavedLibrary(exportLibraryBackup(imported)), saveAlias(alias), saveWorkspace(workspace)]);
+  const library = (storage.library as LibraryBackupState['library']);
+  expect(library.aliases.map(item => item.name)).toEqual(['Work dashboard', 'Concurrent alias']);
+  expect(library.workspaces.map(item => item.name)).toEqual(['Research desk', 'Concurrent workspace']);
 });
 it('revalidates current saved data after preview and refuses a new conflict without writing', async () => {
   const json = exportLibraryBackup(sample()); await previewSavedLibraryImport(json);

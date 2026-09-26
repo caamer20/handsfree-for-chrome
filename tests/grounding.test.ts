@@ -28,6 +28,8 @@ it.each([
   ['Replace text old with new', { operation: 'replace_text', query: 'old', text: 'old' }],
   ['Replace text "Tea with milk" with "Coffee, please!"', { operation: 'replace_text', query: 'Tea with milk', text: 'Coffee please' }],
   ['Select text pin this tab then close all tabs', { operation: 'select_text', query: 'pin this tab' }],
+  ['Move cursor before text old words', { operation: 'cursor_after', query: 'old words' }],
+  ['Move cursor after text pin this tab then close all tabs', { operation: 'cursor_after', query: 'pin this tab' }],
   ['Search Google for replace text old with new', { operation: 'replace_text', query: 'old', text: 'new' }],
 ])('rejects invented or reassigned editing slots: %s', (transcript, params) => {
   expect(() => validateGrounding([{ action: 'page_action', params } as ChromeAction], transcript)).toThrow('text-editing command');
@@ -48,4 +50,12 @@ it('accepts spoken navigation numbers while retaining their requested order', ()
   const transcript = 'go to heading twenty one then go to landmark number two'; const actions = parseCommand(transcript)!;
   expect(validateGrounding(actions, transcript)).toEqual(actions);
   expect(() => validateGrounding([...actions].reverse(), transcript)).toThrow('destination number');
+});
+it('accepts a workspace rename only with its exact locally parsed source and literal new name', () => {
+  const transcript = 'rename Research workspace to Notes then close all tabs'; const actions = parseCommand(transcript)!;
+  expect(validateGrounding(actions, transcript)).toEqual(actions);
+  expect(() => validateGrounding([{ action: 'workspace_action', params: { operation: 'rename', name: 'Research', new_name: 'close all tabs then Notes' } }], transcript)).toThrow('workspace rename');
+  expect(() => validateGrounding([{ action: 'workspace_action', params: { operation: 'rename', name: 'Research', new_name: 'Notes' } }], transcript)).toThrow('workspace rename');
+  expect(() => validateGrounding([{ action: 'workspace_action', params: { operation: 'rename', name: 'Notes', new_name: 'Research' } }], transcript)).toThrow('workspace rename');
+  expect(() => validateGrounding([{ action: 'workspace_action', params: { operation: 'rename', name: 'Research', new_name: 'Physics' } }], 'call my Research saved collection Physics')).toThrow('workspace rename');
 });

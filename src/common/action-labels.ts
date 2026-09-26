@@ -38,10 +38,11 @@ export function describeAction(action: ChromeAction): string {
       if (p.operation === 'select_text') return `Select “${p.query}” in the focused field`;
       if (p.operation === 'replace_text') return `Replace “${p.query}” with “${p.text}” in the focused field`;
       if (p.operation === 'cursor_start' || p.operation === 'cursor_end') return `Move the cursor to the ${p.operation === 'cursor_start' ? 'start' : 'end'} of the focused field`;
+      if (p.operation === 'cursor_before' || p.operation === 'cursor_after') return `Move the cursor ${p.operation === 'cursor_before' ? 'before' : 'after'} “${p.query}” in the focused field`;
       return p.operation.replaceAll('_', ' ') + (p.query ? ` “${p.query}”` : '') + (p.index !== undefined ? ` number ${p.index}` : '') + (p.text !== undefined ? ` with “${p.text}”` : '') + (p.value !== undefined ? ` ${p.relative ? 'by ' : 'to '}${p.value}${p.operation === 'media_volume' ? ' percent' : ' seconds'}` : '') + (p.direction ? ` ${p.direction}` : '');
     }
     case 'group_action': return `${action.params.operation.replaceAll('_', ' ')} group ${action.params.name}${action.params.color ? ` · ${action.params.color}` : action.params.new_name ? ` to ${action.params.new_name}` : ''}`;
-    case 'workspace_action': return `${action.params.operation} workspace ${action.params.name ?? ''}`;
+    case 'workspace_action': return action.params.operation === 'discard_previous' ? `Review discarding the previous saved version of ${action.params.name ?? 'a workspace'}` : `${action.params.operation} workspace ${action.params.name ?? ''}${action.params.new_name ? ` to ${action.params.new_name}` : ''}`;
     case 'reading_action': return `${action.params.operation.replaceAll('_', ' ')} in the reading list`;
     case 'audio_action': return action.params.operation === 'mute_others' ? 'Mute other tabs' : 'Find audible tabs';
     case 'duplicates_action': return `${action.params.operation === 'close' ? 'Review and close' : 'Show'} duplicate tabs`;

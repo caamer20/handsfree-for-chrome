@@ -19,7 +19,7 @@
 
 HandsFree turns spoken or typed commands into browser actions. Find a tab by name, organize a workspace, edit a form, dictate into a text field, or combine commands into a routine of your own. Common commands run through a local parser. An AI account is optional.
 
-> **Developer preview:** Version 1.9 adds voice text correction, page-outline navigation, portable library backups, faithful workspace restoration, and stronger speech and permission checks. Automated speech tests use synthetic transcription results; real microphones, accents, OS sleep/wake, and complex third-party websites still need human testing. HandsFree is not listed in the Chrome Web Store. See the [validation record](docs/VALIDATION.md).
+> **Developer preview:** Version 1.10 adds spoken follow-up answers and paged readback, safer multiline writing, recoverable workspace updates, and diagnostic reports that exclude private content. Automated speech tests use synthetic transcription results; real microphones, accents, OS sleep/wake, and complex third-party websites still need human testing. HandsFree is not listed in the Chrome Web Store. See the [validation record](docs/VALIDATION.md).
 
 ## What you can do
 
@@ -27,9 +27,11 @@ HandsFree turns spoken or typed commands into browser actions. Find a tab by nam
 - **Work on the page.** Scroll, find text, number links and form fields, fill or clear text, select dropdown options, and control native media.
 - **Navigate page structure.** Choose a heading or page region, move through headings by voice, and find phrases across inline formatting.
 - **Dictate into a field.** Speak text while continuously listening; say “stop dictation” to return to commands.
-- **Correct text by voice.** Select or replace a phrase in the focused field, move the cursor, or say “scratch that” during dictation to undo the last unchanged insertion.
+- **Correct text by voice.** Select or replace a phrase in the focused field, put the cursor before or after it, or say “scratch that” during dictation to undo the last unchanged insertion. Plain editable areas support visible line breaks and paragraph-aware editing.
 - **Make it personal.** Save website nicknames, preferred apps, workspaces, and groups of websites to open together.
-- **Keep your library portable.** Export site nicknames, both kinds of routines, and workspaces together; preview an import before adding it without overwriting saved entries.
+- **Keep your library portable.** Export site nicknames, both kinds of routines, and workspaces with their previous saved versions; preview an import before adding it without overwriting saved entries.
+- **Keep conversations going.** Answer a question or command review with one fresh spoken response. Read or repeat the full choices aloud and move between pages.
+- **Update workspaces safely.** Review the proposed tabs before replacing a save, recover its previous version, rename it by voice, or discard only its saved history after reviewing it.
 - **Build reusable routines.** Supply inputs such as `{topic}`, reorder steps, wait for a page or field, and import/export routine templates.
 - **See what happened.** Follow action progress, answer clarifying questions, review bulk closures, and inspect confirmed completions when execution stops.
 - **Keep controls nearby.** Open the optional side panel for your transcript, current tab, progress, choices, and Stop button across tab changes.
@@ -74,7 +76,13 @@ For commands that interact with a website, open **Settings → Page controls →
 | “Start dictation” | Insert speech into the focused editable field. |
 | “Replace text black holes with neutron stars” | Replace one occurrence inside the focused editable field. |
 | “Move the cursor to the end” | Put the caret after the focused field’s text. |
-| “Save this workspace as Research” | Save web tabs, pin states, and named groups locally. |
+| “Move the cursor before text black holes” | Place the caret before one matching phrase in the focused field. “After text …” works too. |
+| “Save this workspace as Research” | Save web tabs, pin states, and groups locally. |
+| “Update Research workspace” | Review the current tabs before replacing the saved version. |
+| “Recover Research workspace” | Review and recover the previous save without changing open tabs. |
+| “Rename Research workspace to Reading” | Change its name while keeping both saved versions. |
+| “Discard previous version of Research workspace” | Review and remove only the previous save. |
+| “Read the choices” / “Next choices” | Read the current question or review aloud while listening for an answer. |
 | “Wait for the search field” | Wait up to 15 seconds for a matching editable field. |
 | “Undo that move” | Restore a supported tab move, if the target has not changed manually. |
 | “Stop” | Cancel remaining command work while retaining completed changes. |
@@ -126,13 +134,15 @@ In **Settings → Readiness & troubleshooting**, select **Check readiness** to i
 | A tab name cannot be found | Choose **Choose another tab**, or edit the command. The selected tab is checked again before acting. |
 | AI cannot connect | Check the provider, model, saved key, and granted API origin; use Test saved connection. |
 
+Download an inspectable diagnostic report from Settings → Website access and troubleshooting, or from the welcome guide. It includes versions, status, configuration flags, and saved-item counts; it excludes URLs, command text, saved content, and credentials. It is saved locally and is never uploaded automatically.
+
 Please include the extension version, operating system, steps to reproduce, and a redacted command example in [bug reports](https://github.com/caamer20/handsfree-for-chrome/issues/new?template=bug_report.yml). Do not include API keys, private page contents, or sensitive browsing information.
 
 ## AI and privacy
 
 **AI is off by default.** Built-in commands, macros, and routines work without a provider account. You can enable:
 
-- **On-device SmolLM2**, included only in the optional **local-AI edition**. It failed all 12 exact-plan cases in the current isolated model benchmark; it is experimental and can misinterpret unsupported phrasing.
+- **On-device SmolLM2**, included only in the optional **local-AI edition**. It passed only 1 of 12 exact-plan cases in the current isolated benchmark, and that case was also a prompt example. It remains experimental and can misinterpret unsupported phrasing.
 - **Your own cloud provider:** OpenAI, Anthropic Claude, Google Gemini, or an OpenAI-compatible HTTPS API. You supply the model and key; provider charges may apply.
 
 Validated AI plans execute automatically by default. AI tab closures require confirmation, and Settings can require review of every AI command. The extension accepts only its defined actions; it does not execute generated JavaScript.
@@ -144,8 +154,8 @@ Common commands and routine templates are processed locally. With cloud AI enabl
 ## Current limits
 
 - Desktop Chrome **120+**; English speech settings for US, UK, Australia, and Canada.
-- The standard edition contains no model weights or AI runtime and is about **0.5 MiB unpacked**. The optional local-AI edition includes both model variants and is approximately **212 MiB zipped**. Both editions support optional cloud AI.
-- Standard text inputs, textareas, plain contenteditable, native checkboxes/radios, and native single-select dropdowns are supported. Custom editors, protected pages, and inaccessible frames may require manual interaction.
+- The standard edition contains no model weights or AI runtime and is about **0.6 MiB unpacked**. The optional local-AI edition includes both model variants and is approximately **212 MiB zipped**. Both editions support optional cloud AI.
+- Standard text inputs, textareas, multiline plain contenteditable, native checkboxes/radios, and native single-select dropdowns are supported. “New line” and “new paragraph” produce visible breaks during dictation. Custom editors, protected pages, and inaccessible frames may require manual interaction.
 - Password, hidden, disabled, and readonly text fields are excluded. Form entry does not implicitly submit.
 - Page and field waits stop after 15 seconds. A document-load event does not guarantee that a site has finished all background requests.
 - Undo covers supported tab moves, pinning, muting, and zoom. During dictation, “scratch that” can restore the last unchanged insertion. Neither is a general undo for form edits, sorting, or an entire routine.

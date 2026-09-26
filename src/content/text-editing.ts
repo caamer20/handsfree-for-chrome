@@ -1,10 +1,18 @@
+import { editableOffset, editableRange, editableText } from './editable-text';
 export interface TextSelection { start: number; end: number; direction?: 'forward' | 'backward' | 'none'; }
 
 export function isTextInput(element: HTMLElement): element is HTMLInputElement | HTMLTextAreaElement {
   return element.tagName === 'INPUT' || element.tagName === 'TEXTAREA';
 }
 
-export function fieldText(element: HTMLElement): string { return isTextInput(element) ? element.value : element.textContent ?? ''; }
+export function editingHost(element: HTMLElement): HTMLElement | null {
+  if (!element.isContentEditable) return null;
+  let host = element;
+  while (host.parentElement?.isContentEditable) host = host.parentElement;
+  return host;
+}
+
+export function fieldText(element: HTMLElement): string { return isTextInput(element) ? element.value : editableText(element).text; }
 
 /** Offsets always belong to one editor; selections elsewhere never become editing targets. */
 export function textSelection(element: HTMLElement): TextSelection | null {
@@ -15,27 +23,15 @@ export function textSelection(element: HTMLElement): TextSelection | null {
   if (!selection?.rangeCount) return null;
   const range = selection.getRangeAt(0);
   if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return null;
-  const before = element.ownerDocument.createRange(); before.selectNodeContents(element); before.setEnd(range.startContainer, range.startOffset);
-  return { start: before.toString().length, end: before.toString().length + range.toString().length };
+  const index = editableText(element);
+  const start = editableOffset(element, range.startContainer, range.startOffset, index); const end = editableOffset(element, range.endContainer, range.endOffset, index);
+  if (start === null || end === null) return null;
+  const backwards = !selection.isCollapsed && selection.anchorNode === range.endContainer && selection.anchorOffset === range.endOffset;
+  return { start, end, direction: backwards ? 'backward' : 'forward' };
 }
 
 export function textRange(element: HTMLElement, start: number, end: number): Range | null {
-  if (start < 0 || end < start || end > fieldText(element).length) return null;
-  const doc = element.ownerDocument; const range = doc.createRange();
-  const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let node: Node | null; let offset = 0; let started = false;
-  while ((node = walker.nextNode())) {
-    const length = node.textContent?.length ?? 0;
-    if (!started && start <= offset + length) { range.setStart(node, start - offset); started = true; }
-    if (started && end <= offset + length) {
-      range.setEnd(node, end - offset);
-      const blocked = Array.from(element.querySelectorAll('[contenteditable="false"]')).some(child => range.intersectsNode(child));
-      return blocked ? null : range;
-    }
-    offset += length;
-  }
-  if (!started && start === 0 && end === 0) { range.selectNodeContents(element); range.collapse(true); return range; }
-  return null;
+  return editableRange(element, start, end);
 }
 
 export function selectTextRange(element: HTMLElement, selection: TextSelection): boolean {
@@ -46,7 +42,9 @@ export function selectTextRange(element: HTMLElement, selection: TextSelection):
   const range = textRange(element, selection.start, selection.end);
   const current = element.ownerDocument.defaultView?.getSelection();
   if (!range || !current) return false;
-  current.removeAllRanges(); current.addRange(range); return true;
+  current.removeAllRanges(); current.addRange(range);
+  if (selection.direction === 'backward' && typeof current.setBaseAndExtent === 'function') current.setBaseAndExtent(range.endContainer, range.endOffset, range.startContainer, range.startOffset);
+  return true;
 }
 
 export function sameSelection(a: TextSelection | null, b: TextSelection | null): boolean {

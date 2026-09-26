@@ -7,11 +7,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const sourceVersion = process.env.HANDSFREE_UPGRADE_VERSION ?? '1.8.0';
-if (!['1.7.0', '1.8.0'].includes(sourceVersion)) throw new Error('HANDSFREE_UPGRADE_VERSION must be 1.7.0 or 1.8.0.');
+if (!['1.7.0', '1.8.0', '1.9.0'].includes(sourceVersion)) throw new Error('HANDSFREE_UPGRADE_VERSION must be 1.7.0, 1.8.0, or 1.9.0.');
 const test = base.extend({
   extensionPath: async ({ browserName }, use) => {
     expect(browserName).toBe('chromium');
-    if (!process.env.HANDSFREE_UPGRADE_ZIP) throw new Error(`Set HANDSFREE_UPGRADE_ZIP to the published ${sourceVersion === '1.7.0' ? 'v1.7.0-preview.1' : 'v1.8.0-preview.1'} ZIP.`);
+    if (!process.env.HANDSFREE_UPGRADE_ZIP) throw new Error(`Set HANDSFREE_UPGRADE_ZIP to a verified ${sourceVersion} ZIP.`);
     const root = await mkdtemp(join(tmpdir(), 'handsfree-upgrade-'));
     try {
       await promisify(execFile)('unzip', ['-q', resolve(process.env.HANDSFREE_UPGRADE_ZIP), '-d', root]);
@@ -26,20 +26,21 @@ const test = base.extend({
   },
 });
 
-test(`preserves published ${sourceVersion} preferences and library through upgrade and browser restart`, async ({ context, control, worker, extensionId, extensionPath, profilePath }) => {
+test(`preserves ${sourceVersion} preferences and library through upgrade and browser restart`, async ({ context, control, worker, extensionId, extensionPath, profilePath }) => {
   const destinationVersion = (JSON.parse(await readFile(resolve('package.json'), 'utf8')) as { version: string }).version;
   expect(await worker.evaluate(() => chrome.runtime.getManifest().version)).toBe(sourceVersion);
   // Old release supplies its own settings schema, avoiding a disguised new-code migration test.
   const old = await state(control);
   const hasTranscript = Object.hasOwn(old, 'transcript');
-  expect(old.settings).not.toHaveProperty('dictationPunctuation');
+  const hasPunctuation = Object.hasOwn(old.settings, 'dictationPunctuation');
+  expect(hasPunctuation).toBe(sourceVersion === '1.9.0');
   const hasVoicePace = Object.hasOwn(old.settings, 'voicePace');
-  const settings = { ...old.settings, language: 'en-GB' as const, feedback: 'sound' as const, reuseTabs: false, ...(hasVoicePace ? { voicePace: 'relaxed' as const } : {}) };
+  const settings = { ...old.settings, language: 'en-GB' as const, feedback: 'sound' as const, reuseTabs: false, ...(hasVoicePace ? { voicePace: 'relaxed' as const } : {}), ...(hasPunctuation ? { dictationPunctuation: true } : {}) };
   expect((await message(control, { target: 'background', type: 'SAVE_SETTINGS', settings })).ok).toBe(true);
   const preservedSettings = {
     language: 'en-GB', feedback: 'sound', reuseTabs: false, mode: old.settings.mode,
     aiEnabled: old.settings.aiEnabled, listeningMode: old.settings.listeningMode, saveTranscripts: old.settings.saveTranscripts,
-    voicePace: hasVoicePace ? 'relaxed' : 'natural', setupVoicePassed: old.settings.setupVoicePassed ?? false, dictationPunctuation: false,
+    voicePace: hasVoicePace ? 'relaxed' : 'natural', setupVoicePassed: old.settings.setupVoicePassed ?? false, dictationPunctuation: hasPunctuation,
   };
   const macro = { id: crypto.randomUUID(), name: 'Daily sites', phrase: 'daily sites', urls: ['https://example.com/'] };
   const routine = { id: crypto.randomUUID(), name: 'Daily task', phrase: 'daily task', steps: ['open a new tab', 'pin this tab'] };
@@ -63,7 +64,9 @@ test(`preserves published ${sourceVersion} preferences and library through upgra
   }).toEqual({ saved: true, phase: 'success', ...(hasTranscript ? { transcript: saveWorkspaceCommand } : {}) });
   const workspace = (await state(control)).library?.workspaces.find(item => item.name === 'Upgrade research');
   expect(workspace).toBeDefined(); expect(workspace?.tabs).toEqual([{ url: 'https://upgrade-fixture.test/reference', title: 'Upgrade reference', pinned: false }]);
-  expect(workspace).not.toHaveProperty('activeTabIndex'); expect(workspace).not.toHaveProperty('groups');
+  if (sourceVersion === '1.9.0') { expect(workspace?.activeTabIndex).toBe(0); }
+  else { expect(workspace).not.toHaveProperty('activeTabIndex'); expect(workspace).not.toHaveProperty('groups'); }
+  expect(workspace).not.toHaveProperty('previous');
   await rm(extensionPath, { recursive: true }); await cp(resolve('dist'), extensionPath, { recursive: true });
   const manager = await context.newPage(); await manager.goto('chrome://extensions/');
   await manager.evaluate(async id => {

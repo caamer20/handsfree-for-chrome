@@ -2,9 +2,11 @@ import { send, errorText } from '../common/messaging';
 import { element as el } from './dom';
 import type { Message } from '../common/schema';
 import type { DiagnosticCheck } from '../common/diagnostics';
+import { DiagnosticExport } from './diagnostic-export';
 export class DiagnosticsPanel {
   constructor(private prefix: string, private perform: (message: Message) => Promise<boolean>) {
     el(`${prefix}-check`).addEventListener('click', () => { void this.refresh(); });
+    new DiagnosticExport(prefix);
   }
   async refresh(): Promise<void> {
     const button = el<HTMLButtonElement>(`${this.prefix}-check`); button.disabled = true;

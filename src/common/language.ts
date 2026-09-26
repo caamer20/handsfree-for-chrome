@@ -11,7 +11,7 @@ export function stripLeadingRequestFraming(input: string): string {
 export function stripRequestFraming(input: string): string {
   let text = stripLeadingRequestFraming(input);
   // Literal/query tails belong to the payload. Quoting also protects a title's suffix.
-  if (!/^(?:type|write|enter text|fill|filling|replace|replacing|select text|highlight text|search|google|look up)\b/i.test(text)) text = text.replace(/[.!?]+$/, '').replace(/(?:,?\s+(?:please|for me|thanks|thank you))+$/i, '');
+  if (!/^(?:type|write|enter text|fill|filling|replace|replacing|select text|highlight text|(?:move|put|place)(?: the)? (?:cursor|caret) (?:before|after)|search|google|look up)\b/i.test(text)) text = text.replace(/[.!?]+$/, '').replace(/(?:,?\s+(?:please|for me|thanks|thank you))+$/i, '');
   return text.trim();
 }
 export function isNegatedCommand(input: string): boolean {

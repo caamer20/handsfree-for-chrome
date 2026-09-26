@@ -1,12 +1,13 @@
 import type { PageParams } from '../common/expanded-schema';
 import type { PageResult } from '../common/page';
 import { isSafeUrl } from '../common/urls';
-import { dictatedInsertion, fieldText, isTextInput, sameSelection, selectTextRange, textOccurrences, textRange, textSelection, type TextSelection } from './text-editing';
+import { dictatedInsertion, editingHost, fieldText, isTextInput, sameSelection, selectTextRange, textOccurrences, textRange, textSelection, type TextSelection } from './text-editing';
+import { editableRangeAllowed, MAX_EDITOR_CHARACTERS, MAX_EDITOR_NODES, protectedEditorElements, replaceEditableRange, restoreEditor, retainEditorNodes, retainedEditorNodesUnchanged, sameEditorNodes, snapshotEditor, type EditorSnapshot, type RetainedEditorNodes } from './editable-text';
 import { findPageText, normalizePageText, pageElements, semanticTarget, type PageTextMatch, type SemanticKind } from './page-navigation';
 
 const EDIT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'number', '']);
 interface Target { element: HTMLElement; label: string; href: string; badge?: HTMLElement; kind?: SemanticKind; fingerprint?: string; }
-interface DictationEdit { element: HTMLElement; token: string; before: string; after: string; beforeSelection: TextSelection; afterSelection: TextSelection; insertedLength: number; fragment?: DocumentFragment; markup?: string; }
+interface DictationEdit { element: HTMLElement; token: string; before: string; after: string; beforeSelection: TextSelection; afterSelection: TextSelection; snapshot?: EditorSnapshot; afterNodes?: EditorSnapshot; retainedNodes?: RetainedEditorNodes; protectedElements?: Element[]; markup?: string; }
 const clean = (text: string): string => text.replace(/\s+/g, ' ').trim();
 const key = (text: string): string => clean(text).toLowerCase().replace(/[“”"']/g, '');
 export class PageController {
@@ -80,10 +81,10 @@ export class PageController {
     return element as HTMLElement | null;
   }
   private editable(element: HTMLElement | null): boolean {
-    if (!element || !this.visible(element) || this.disabled(element)) return false;
+    if (!element || !this.visible(element) || this.disabled(element) || element.getAttribute('aria-readonly') === 'true') return false;
     if (element.tagName === 'INPUT') { const input = element as HTMLInputElement; return EDIT_TYPES.has(input.type) && !input.disabled && !input.readOnly; }
     if (element.tagName === 'TEXTAREA') return !(element as HTMLTextAreaElement).disabled && !(element as HTMLTextAreaElement).readOnly;
-    return element.isContentEditable || ['true', 'plaintext-only', ''].includes(element.getAttribute('contenteditable') ?? 'false');
+    return editingHost(element) === element;
   }
   probe(): PageResult { this.readability = new WeakMap(); const active = this.activeElement(); return { ok: true, text: 'Page ready', focused: this.doc.hasFocus() && active?.tagName !== 'IFRAME', editable: this.editable(active) }; }
   private clearTargets(): void {
@@ -177,6 +178,8 @@ export class PageController {
     if (!query) {
       const active = this.activeElement();
       if (active && this.editable(active)) return active;
+      const host = active && !/^(A|BUTTON|SELECT|INPUT|TEXTAREA)$/.test(active.tagName) ? editingHost(active) : null;
+      if (host && this.editable(host)) return host;
       return { ok: false, text: 'Focus a text field first, or say “type into the search box”. Password fields are excluded.' };
     }
     const matches = this.matching(query, true);
@@ -186,9 +189,34 @@ export class PageController {
   }
   private insert(element: HTMLElement, text: string, replace = false, deleting = false): PageResult {
     if (!this.editable(element)) return { ok: false, text: 'That text field is no longer available.' };
+    const before = fieldText(element); const selectionBefore = textSelection(element);
+    const markupBefore = isTextInput(element) ? undefined : element.innerHTML;
+    const nodesBefore = isTextInput(element) ? undefined : snapshotEditor(element);
+    let editingRange: Range | undefined;
+    if (nodesBefore) {
+      if (replace) { editingRange = this.doc.createRange(); editingRange.selectNodeContents(element); }
+      else {
+        const candidate = textRange(element, selectionBefore?.start ?? before.length, selectionBefore?.end ?? before.length);
+        if (!candidate) return { ok: false, text: 'That selection is no longer available for editing.' };
+        editingRange = candidate;
+      }
+      if (!editableRangeAllowed(element, editingRange)) return { ok: false, text: 'That selection includes hidden or noneditable content. Your text was kept.' };
+      const replacedLength = replace ? before.length : (selectionBefore?.end ?? before.length) - (selectionBefore?.start ?? before.length);
+      const lines = text.replace(/\r\n?/g, '\n').split('\n');
+      // Count added text/BR nodes, a possible line placeholder and a split text node.
+      const addedNodes = lines.filter(Boolean).length + lines.length - 1 + 2;
+      const resultingNodes = replace ? 1 + addedNodes : nodesBefore.children.length + nodesBefore.text.length + addedNodes;
+      const rawCharacters = nodesBefore.text.reduce((total, [, value]) => total + value.length, 0) - editingRange.toString().length;
+      const insertedLength = text.replace(/\r\n?/g, '\n').length;
+      if (Math.max(before.length - replacedLength, rawCharacters) + insertedLength > MAX_EDITOR_CHARACTERS || resultingNodes > MAX_EDITOR_NODES) return { ok: false, text: 'That insertion would exceed the editor’s safe size limit. Your text was kept.' };
+    }
+    const activeBefore = this.activeElement(); const focusedBefore = this.doc.hasFocus();
     const inputType = deleting ? 'deleteContentBackward' : replace ? 'insertReplacementText' : 'insertText';
     const inputEvent = new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, data: text, inputType });
     if (!element.dispatchEvent(inputEvent)) return { ok: false, text: 'This editor handled the input itself. Use its editing controls.' };
+    this.readability = new WeakMap();
+    const selectionAfter = textSelection(element);
+    if (!this.editable(element) || fieldText(element) !== before || (markupBefore !== undefined && element.innerHTML !== markupBefore) || (nodesBefore && !sameEditorNodes(nodesBefore)) || (selectionBefore || selectionAfter ? !sameSelection(selectionBefore, selectionAfter) : false) || this.activeElement() !== activeBefore || this.doc.hasFocus() !== focusedBefore) return { ok: false, text: 'The field or selection changed before text entry. Your current text was kept.' };
     let expected: string;
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const input = element as HTMLInputElement | HTMLTextAreaElement;
@@ -202,13 +230,10 @@ export class PageController {
       if (setter) setter.call(input, next); else input.value = next;
       try { input.setSelectionRange(start + text.length, start + text.length); } catch { /* Some input types have no text selection. */ }
     } else {
-      const selection = this.win.getSelection(); let range: Range;
-      if (!replace && selection?.rangeCount && element.contains(selection.getRangeAt(0).commonAncestorContainer)) range = selection.getRangeAt(0);
-      else { range = this.doc.createRange(); range.selectNodeContents(element); if (!replace) range.collapse(false); }
-      if (Array.from(element.querySelectorAll('[contenteditable="false"]')).some(child => range.intersectsNode(child))) return { ok: false, text: 'That selection includes content the editor does not allow changing.' };
-      range.deleteContents(); const node = this.doc.createTextNode(text); range.insertNode(node); range.setStartAfter(node); range.collapse(true);
-      selection?.removeAllRanges(); selection?.addRange(range);
-      expected = element.textContent ?? '';
+      const start = replace ? 0 : selectionBefore?.start ?? before.length; const end = replace ? before.length : selectionBefore?.end ?? before.length;
+      if (!editingRange || !editableRangeAllowed(element, editingRange)) return { ok: false, text: 'That selection includes hidden or noneditable content. Your text was kept.' };
+      expected = before.slice(0, start) + text.replace(/\r\n?/g, '\n') + before.slice(end);
+      replaceEditableRange(element, editingRange, text);
     }
     this.editing = true;
     try { element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType })); }
@@ -241,9 +266,9 @@ export class PageController {
       return result.ok ? result : { ...result, dictating: false };
     }
     const current = fieldText(element); const beforeSelection = textSelection(element) ?? { start: current.length, end: current.length };
-    const spoken = literal ? literal[1]! : text.replace(/\bnew paragraph\b/gi, '\n\n').replace(/\bnew line\b/gi, '\n');
+    const spoken = literal ? literal[1]! : text.replace(/[ \t]*\bnew paragraph\b[ \t]*/gi, '\n\n').replace(/[ \t]*\bnew line\b[ \t]*/gi, '\n');
     const insertion = dictatedInsertion(current, beforeSelection, spoken);
-    const fragment = isTextInput(element) ? undefined : textRange(element, beforeSelection.start, beforeSelection.end)?.cloneContents();
+    const snapshot = isTextInput(element) ? undefined : snapshotEditor(element);
     this.dictationEdit = null;
     const result = await this.insertVerified(element, insertion);
     if (!result.ok) { if (token === this.dictationToken) { this.dictationTarget = null; this.dictationToken = null; } return { ...result, dictating: false }; }
@@ -253,23 +278,28 @@ export class PageController {
       return { ok: false, text: 'The editor changed the insertion point. Check the last entered text before continuing.', dictating: false };
     }
     const afterSelection = textSelection(element);
-    if (afterSelection && (isTextInput(element) || fragment)) this.dictationEdit = { element, token: token!, before: current, after: fieldText(element), beforeSelection, afterSelection, insertedLength: insertion.length, ...(fragment ? { fragment, markup: element.innerHTML } : {}) };
+    if (afterSelection) this.dictationEdit = { element, token: token!, before: current, after: fieldText(element), beforeSelection, afterSelection, ...(snapshot ? { snapshot, afterNodes: snapshotEditor(element), retainedNodes: retainEditorNodes(snapshot), protectedElements: protectedEditorElements(element), markup: element.innerHTML } : {}) };
     return result;
   }
   private async undoDictation(element: HTMLElement, token: string): Promise<PageResult> {
     const edit = this.dictationEdit; this.dictationEdit = null;
-    if (!edit || edit.element !== element || edit.token !== token || !this.editable(element) || fieldText(element) !== edit.after || !sameSelection(textSelection(element), edit.afterSelection) || (edit.markup !== undefined && element.innerHTML !== edit.markup)) return { ok: false, text: 'The field or selection changed, or there is no dictation to undo. Your text was kept.' };
+    const unchangedNodes = (): boolean => {
+      if (!edit || (edit.afterNodes && !sameEditorNodes(edit.afterNodes)) || (edit.retainedNodes && !retainedEditorNodesUnchanged(edit.retainedNodes))) return false;
+      if (edit.protectedElements) { const current = protectedEditorElements(element); if (current.length !== edit.protectedElements.length || current.some((node, index) => node !== edit.protectedElements![index])) return false; }
+      return true;
+    };
+    if (!edit || edit.element !== element || edit.token !== token || !this.editable(element) || fieldText(element) !== edit.after || !sameSelection(textSelection(element), edit.afterSelection) || (edit.markup !== undefined && element.innerHTML !== edit.markup) || !unchangedNodes()) return { ok: false, text: 'The field or selection changed, or there is no dictation to undo. Your text was kept.' };
     if (!element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, inputType: 'historyUndo', data: null }))) return { ok: false, text: 'This editor prevented undo. Your text was kept.' };
-    if (fieldText(element) !== edit.after || !sameSelection(textSelection(element), edit.afterSelection) || (edit.markup !== undefined && element.innerHTML !== edit.markup) || this.activeElement() !== element || token !== this.dictationToken) return { ok: false, text: 'The field changed before undo. Check its text before trying again.' };
+    this.readability = new WeakMap();
+    if (!this.editable(element) || fieldText(element) !== edit.after || !sameSelection(textSelection(element), edit.afterSelection) || (edit.markup !== undefined && element.innerHTML !== edit.markup) || !unchangedNodes() || this.activeElement() !== element || !this.doc.hasFocus() || token !== this.dictationToken) return { ok: false, text: 'The field changed before undo. Check its text before trying again.' };
     this.editing = true;
     try {
       if (isTextInput(element)) {
         const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element) as object, 'value')?.set;
         if (setter) setter.call(element, edit.before); else element.value = edit.before;
       } else {
-        const range = textRange(element, edit.beforeSelection.start, edit.beforeSelection.start + edit.insertedLength);
-        if (!range || !edit.fragment) return { ok: false, text: 'That part of the editor is no longer available. Your text was kept.' };
-        range.deleteContents(); range.insertNode(edit.fragment.cloneNode(true));
+        if (!edit.snapshot) return { ok: false, text: 'That part of the editor is no longer available. Your text was kept.' };
+        restoreEditor(edit.snapshot);
       }
       selectTextRange(element, edit.beforeSelection);
       element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'historyUndo', data: null }));
@@ -379,15 +409,18 @@ export class PageController {
   private async runCommand(command: PageParams, token?: string): Promise<PageResult> {
     const op = command.operation;
     if (['show_headings', 'next_heading', 'previous_heading', 'go_heading', 'show_landmarks', 'next_landmark', 'previous_landmark', 'go_landmark'].includes(op)) return this.semantic(command, token);
-    if (['select_text', 'replace_text', 'cursor_start', 'cursor_end'].includes(op)) {
+    if (['select_text', 'replace_text', 'cursor_start', 'cursor_end', 'cursor_before', 'cursor_after'].includes(op)) {
       const selected = this.chooseEditing(); if ('ok' in selected) return selected;
       this.dictationEdit = null;
       const value = fieldText(selected);
       const matches = op === 'cursor_start' || op === 'cursor_end' ? [{ start: op === 'cursor_start' ? 0 : value.length, end: op === 'cursor_start' ? 0 : value.length }] : textOccurrences(value, command.query ?? '');
       if (!matches.length) return { ok: false, text: 'That text was not found in this field.' };
       if (matches.length > 1) return { ok: false, text: 'That text occurs more than once in this field. Say a longer, more specific phrase.' };
-      if (!selectTextRange(selected, matches[0]!)) return { ok: false, text: 'This field or text does not support that selection.' };
+      const match = matches[0]!;
+      const selection = op === 'cursor_before' ? { start: match.start, end: match.start } : op === 'cursor_after' ? { start: match.end, end: match.end } : match;
+      if (!selectTextRange(selected, selection)) return { ok: false, text: 'This field or text does not support that selection.' };
       if (op === 'replace_text') return this.insertVerified(selected, command.text ?? '');
+      if (op === 'cursor_before' || op === 'cursor_after') return { ok: true, text: `Cursor moved ${op === 'cursor_before' ? 'before' : 'after'} the matching text` };
       return { ok: true, text: op === 'select_text' ? 'Text selected in this field' : `Cursor moved to the ${op === 'cursor_start' ? 'start' : 'end'} of this field` };
     }
     if (op === 'field_ready') { const matches = this.matching(command.query ?? '', true); return { ok: true, editable: matches.length === 1, text: matches.length === 1 ? 'Field ready' : matches.length > 1 ? 'Several fields match; use a more specific field label.' : 'Waiting for the field' }; }
@@ -395,7 +428,7 @@ export class PageController {
     if (op === 'find' || op === 'find_next' || op === 'find_previous') return this.find(op === 'find' ? command.query : undefined, op === 'find_previous');
     if (op === 'show_fields') { const fields = this.elements().filter(el => this.formControl(el)); return { ...this.enumerate(fields), text: fields.length ? 'Form fields numbered. Say “click number two” to focus a field, then edit it.' : 'No available form fields on this page.' }; }
     if (op === 'next_field' || op === 'previous_field') {
-      const fields = this.elements().filter(el => this.formControl(el) && el.tabIndex >= 0).sort((a, b) => (a.tabIndex > 0 ? a.tabIndex : Infinity) - (b.tabIndex > 0 ? b.tabIndex : Infinity));
+      const fields = this.elements().filter(el => this.formControl(el) && (el.tabIndex >= 0 || (!el.hasAttribute('tabindex') && editingHost(el) === el))).sort((a, b) => (a.tabIndex > 0 ? a.tabIndex : Infinity) - (b.tabIndex > 0 ? b.tabIndex : Infinity));
       if (!fields.length) return { ok: false, text: 'No available form fields on this page.' };
       const current = fields.indexOf(this.activeElement()!);
       const index = current < 0 ? op === 'next_field' ? 0 : fields.length - 1 : (current + (op === 'next_field' ? 1 : -1) + fields.length) % fields.length;

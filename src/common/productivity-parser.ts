@@ -6,9 +6,11 @@ import { navigationCommand } from './navigation-parser';
 
 const page = (params: PageParams): ChromeAction[] => [{ action: 'page_action', params }];
 const unquote = (value: string): string => value.replace(/^["“]([\s\S]*)["”]$/, '$1');
-export const isEditingLiteral = (raw: string): boolean => /^(?:(?:select|highlight) text|replace text)(?:\s|$)/i.test(raw);
+export const isEditingLiteral = (raw: string): boolean => /^(?:(?:select|highlight) text|replace text|(?:move|put|place)(?: the)? (?:cursor|caret) (?:before|after)(?: text)?)(?:\s|$)/i.test(raw);
 /** These explicit text commands operate inside the focused field. Tails stay data. */
 export function editingLiteral(raw: string): ChromeAction[] | null {
+  const cursor = raw.match(/^(?:move|put|place)(?: the)? (?:cursor|caret) (before|after)(?: text)? ([\s\S]+)$/i);
+  if (cursor?.[1] && cursor[2]) return page({ operation: cursor[1].toLowerCase() === 'before' ? 'cursor_before' : 'cursor_after', query: unquote(cursor[2]) });
   const replacement = /^replace text ["“]/i.test(raw)
     ? raw.match(/^replace text ["“](.+?)["”] with ([\s\S]+)$/i)
     : raw.match(/^replace text (.+?) with ([\s\S]+)$/i);

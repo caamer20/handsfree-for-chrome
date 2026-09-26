@@ -43,9 +43,9 @@ move_beside: {"query":"Gmail","side":"before|after"}
 undo_action: {"kind":"move|pin|mute|zoom"}
 site_alias: {"name":"nickname"}
 macro_add_site: {"name":"routine name"}
-page_action: {"operation":"scroll|find|find_next|find_previous|show_links|activate|hide_links|focus|type|fill|clear|select_all|delete_selection|next_field|previous_field|show_fields|select_option|check|uncheck|dictate_start|dictate_stop|media_play|media_pause|media_seek|media_volume|help","query":"optional exact label or search","text":"optional literal text","index":5,"direction":"up|down|left|right|top|bottom","amount":"little|half|page|repeat","value":10,"relative":true}
+page_action: {"operation":"scroll|find|find_next|find_previous|show_headings|next_heading|previous_heading|go_heading|show_landmarks|next_landmark|previous_landmark|go_landmark|show_links|activate|hide_links|focus|type|fill|clear|select_all|select_text|replace_text|cursor_start|cursor_end|cursor_before|cursor_after|delete_selection|next_field|previous_field|show_fields|select_option|check|uncheck|dictate_start|dictate_stop|media_play|media_pause|media_seek|media_volume|help","query":"optional exact label or search","text":"optional literal text","index":5,"direction":"up|down|left|right|top|bottom","amount":"little|half|page|repeat","value":10,"relative":true}
 group_action: {"operation":"create|add|collapse|expand|rename|move_window|color|ungroup","name":"group name","new_name":"optional new name","color":"optional grey|blue|red|yellow|green|pink|purple|cyan|orange"}
-workspace_action: {"operation":"save|restore|list","name":"optional workspace name"}
+workspace_action: {"operation":"save|update|recover|rename|discard_previous|restore|list","name":"optional workspace name","new_name":"optional exact literal new name for rename","scope":"optional window|selection"}
 reading_action: {"operation":"save|list|open_unread|mark_read|mark_unread"}
 audio_action: {"operation":"list|focus|mute_others","query":"optional tab name"}
 duplicates_action: {"operation":"show|close"}

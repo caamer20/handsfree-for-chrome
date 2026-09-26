@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { aliasSchema, BUILTIN_SITES, normalizeName, workspaceSchema, type Library, type SiteAlias, type Workspace } from './library';
+import { aliasSchema, BUILTIN_SITES, legacyWorkspaceSchema, normalizeName, workspaceSchema, workspaceSnapshotDetails, type Library, type SiteAlias, type Workspace } from './library';
 import { macroSchema, normalizeMacroPhrase, type Macro } from './macros';
 import { routineSchema, type Routine } from './routine-schema';
 import { compileRoutine, matchRoutine } from './routines';
@@ -20,7 +20,10 @@ const portableSchema = z.object({
   routines: z.array(routineSchema).max(50, 'Use at most 50 command routines.'),
   workspaces: z.array(workspaceSchema).max(30, 'Use at most 30 workspaces.'),
 }).strict();
-const backupSchema = portableSchema.extend({ format: z.literal('handsfree-library'), version: z.literal(1) }).strict();
+const backupSchema = z.discriminatedUnion('version', [
+  portableSchema.extend({ format: z.literal('handsfree-library'), version: z.literal(1), workspaces: z.array(legacyWorkspaceSchema).max(30) }).strict(),
+  portableSchema.extend({ format: z.literal('handsfree-library'), version: z.literal(2) }).strict(),
+]);
 export type LibraryBackup = z.infer<typeof backupSchema>;
 type PortableLibrary = z.infer<typeof portableSchema>;
 type Item = SiteAlias | Macro | Routine | Workspace;
@@ -97,6 +100,7 @@ export function parseLibraryBackup(text: string): LibraryBackup {
   checkSize(text);
   let raw: unknown;
   try { raw = JSON.parse(text) as unknown; } catch { throw new Error('This file is not valid JSON. Choose a HandsFree library backup.'); }
+  if (raw && typeof raw === 'object' && 'format' in raw && raw.format === 'handsfree-library' && 'version' in raw && raw.version !== 1 && raw.version !== 2) throw new Error('Unsupported library backup version. Update HandsFree before importing this file.');
   let backup: LibraryBackup;
   try { backup = backupSchema.parse(raw); } catch (error) { return schemaError(error, 'Invalid library backup'); }
   if (!LIBRARY_BACKUP_KINDS.some(kind => backup[kind].length)) throw new Error('This backup contains no site nicknames, routines, or workspaces.');
@@ -107,29 +111,21 @@ export function exportLibraryBackup(input: LibraryBackupState): string {
   const state = parseLibraryBackupState(input);
   const data = portable(state);
   if (!LIBRARY_BACKUP_KINDS.some(kind => data[kind].length)) throw new Error('Your library is empty. Save a site nickname, routine, or workspace before exporting.');
-  const text = JSON.stringify({ format: 'handsfree-library', version: 1, ...data }, null, 2);
+  const text = JSON.stringify({ format: 'handsfree-library', version: 2, ...data }, null, 2);
   checkSize(text); return text;
 }
 function content(item: Item): string {
   // IDs are regenerated on import; a workspace's creation date is metadata.
   // All user-visible content must match to qualify for a duplicate skip.
   const value = { ...item } as Record<string, unknown>; delete value.id; delete value.createdAt;
+  if ('previous' in item && item.previous) { const previous = { ...item.previous } as Record<string, unknown>; delete previous.createdAt; value.previous = previous; }
   return JSON.stringify(value);
 }
 function details(item: Item): string[] {
   if ('searchUrl' in item) return [`Website: ${item.url}`, ...(item.searchUrl ? [`Search URL: ${item.searchUrl}`] : [])];
   if ('urls' in item) return [`Spoken phrase: ${item.phrase}`, ...item.urls.map((url, index) => `Website ${index + 1}: ${url}`)];
   if ('steps' in item) return [`Spoken phrase: ${item.phrase}`, ...item.steps.map((step, index) => `Step ${index + 1}: ${step}`)];
-  const groups = item.groups ?? [];
-  return [
-    `Active tab: ${(item.activeTabIndex ?? 0) + 1}`,
-    ...groups.map((group, index) => `Group ${index + 1}: ${group.title || 'Untitled group'} · ${group.color} · ${group.collapsed ? 'Collapsed' : 'Expanded'}`),
-    ...item.tabs.map((tab, index) => {
-      const groupIndex = groups.findIndex(group => group.id === tab.groupId);
-      const group = groupIndex >= 0 ? ` · Group ${groupIndex + 1}` : tab.group ? ` · Group: ${tab.group} · ${tab.color ?? 'grey'}` : '';
-      return `Tab ${index + 1}: ${tab.title || 'Untitled tab'} · ${tab.url} · ${tab.pinned ? 'Pinned' : 'Unpinned'}${group}`;
-    }),
-  ];
+  return [...workspaceSnapshotDetails(item), ...(item.previous ? [`Previous saved version: ${item.previous.tabs.length} tabs`, ...workspaceSnapshotDetails(item.previous).map(detail => `Previous version · ${detail}`)] : [])];
 }
 function plan(text: string, input: LibraryBackupState): { state: LibraryBackupState; preview: LibraryBackupPreview; additions: PortableLibrary } {
   const incoming = parseLibraryBackup(text); const state = parseLibraryBackupState(input); const saved = portable(state);

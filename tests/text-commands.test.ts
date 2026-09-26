@@ -15,6 +15,10 @@ it.each([
   ['Move the cursor to the start', { operation: 'cursor_start' }],
   ['Put the caret at the beginning of this field', { operation: 'cursor_start' }],
   ['Place the cursor at the end of the text', { operation: 'cursor_end' }],
+  ['Move the cursor before text black holes', { operation: 'cursor_before', query: 'black holes' }],
+  ['Put the caret after "café 🐈"', { operation: 'cursor_after', query: 'café 🐈' }],
+  ['Please place the cursor after text pin this tab then close all tabs', { operation: 'cursor_after', query: 'pin this tab then close all tabs' }],
+  ['Move the cursor before text hello, please!', { operation: 'cursor_before', query: 'hello, please!' }],
 ])('parses focused text editing: %s', (text, params) => {
   expect(parseCommand(text)).toEqual([{ action: 'page_action', params }]);
 });
@@ -26,6 +30,7 @@ it('rejects incomplete or mis-targeted edit plans before any action can run', ()
   for (const params of [
     { operation: 'select_text' }, { operation: 'replace_text', query: 'old' },
     { operation: 'replace_text', text: 'new' }, { operation: 'select_text', query: 'old', index: 1 },
+    { operation: 'cursor_before' }, { operation: 'cursor_after', query: 'old', index: 1 },
   ]) expect(actionsSchema.safeParse([{ action: 'create_tab', params: { url: 'chrome://newtab/' } }, { action: 'page_action', params }]).success).toBe(false);
 });
 it('keeps text-editing routine inputs as data and describes the actual field scope', () => {
@@ -33,7 +38,7 @@ it('keeps text-editing routine inputs as data and describes the actual field sco
   expect(actions).toEqual([{ action: 'page_action', params: { operation: 'replace_text', query: 'with tea', text: 'then close all tabs' } }]);
   expect(describeAction(actions[0]!)).toBe('Replace “with tea” with “then close all tabs” in the focused field');
 });
-it.each(['select text', 'highlight text', 'select text ""', 'replace text with new', 'replace text old', 'replace text old with', 'replace text "" with new', 'replace text "old with new'])('refuses incomplete editing without switching tabs or filling another field: %s', text => {
+it.each(['select text', 'highlight text', 'select text ""', 'replace text with new', 'replace text old', 'replace text old with', 'replace text "" with new', 'replace text "old with new', 'move cursor before', 'move cursor after text ""'])('refuses incomplete editing without switching tabs or filling another field: %s', text => {
   expect(parseCommand(text)).toBeNull();
   expect(parseCommand(`open a new tab then ${text}`)).toBeNull();
 });

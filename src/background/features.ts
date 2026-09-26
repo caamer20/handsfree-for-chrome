@@ -1,8 +1,9 @@
 import type { ChromeAction } from '../common/schema';
-import { aliasSchema, normalizeName, siteMatchesUrl, type Workspace } from '../common/library';
+import { z } from 'zod';
+import { aliasSchema, normalizeName, siteMatchesUrl, workspaceSchema, workspaceSnapshot, workspaceSnapshotDetails, workspaceSnapshotSchema, type Workspace, type WorkspaceSnapshot } from '../common/library';
 import { ChoiceRequired, ReviewRequired, checkCancelled, tabRef, type TargetContext, type PageRef } from '../common/conversation';
 import { isSafeUrl } from '../common/urls';
-import { getLibrary, saveAlias, saveWorkspace } from './library-store';
+import { discardPreviousWorkspace, getLibrary, renameWorkspace, replaceWorkspace, saveAlias, saveWorkspace } from './library-store';
 import { saveMacro } from './store';
 import { applyUndo, contextFor, contextTabs, markIrreversible, matchTabs, recordUndo, rememberTargets, resolveSite, resolveTabs, sites, type ExecutionEnvironment } from './execution';
 import { cancelPage, pageCommand } from './page-bridge';
@@ -13,10 +14,17 @@ const usable = (url?: string): url is string => !!url && isSafeUrl(url) && url !
 function named<T extends { id: string; name: string }>(items: T[], name: string, kind: 'workspace' | 'macro', env: ExecutionEnvironment): T {
   const query = normalizeName(name).replace(/^(?:my|the) /, '').replace(/ (?:routine|macro|workspace)$/, '');
   const key = `${kind}:${query}`; const override = env.overrides[key]?.value;
-  const exact = items.filter(item => item.id === override || item.id === name || normalizeName(item.name) === query);
+  if (override) {
+    const chosen = items.find(item => item.id === override);
+    if (!chosen) throw new Error(`That ${kind} is no longer saved. Ask again to choose another.`);
+    return chosen;
+  }
+  const direct = items.find(item => item.id === name); if (direct) return direct;
+  const full = items.filter(item => normalizeName(item.name) === normalizeName(name));
+  const exact = full.length ? full : items.filter(item => normalizeName(item.name) === query);
   const matches = exact.length ? exact : items.filter(item => query.split(' ').every(word => normalizeName(item.name).split(' ').includes(word)));
   if (!matches.length) throw new Error(`No ${kind} named “${name}” found. Create one in Library first.`);
-  if (matches.length > 1) throw new ChoiceRequired(`Which ${kind} did you mean?`, matches.map(item => ({ id: item.id, label: item.name, value: item.id })), kind, key);
+  if (matches.length > 1) throw new ChoiceRequired(`Which ${kind} did you mean?`, matches.map(item => ({ id: item.id, label: item.name, ...('phrase' in item && typeof item.phrase === 'string' ? { detail: `Say “${item.phrase}”` } : {}), value: item.id })), kind, key);
   return matches[0]!;
 }
 async function groupNamed(name: string, env: ExecutionEnvironment): Promise<chrome.tabGroups.TabGroup> {
@@ -42,6 +50,106 @@ function duplicateExtras(tabs: chrome.tabs.Tab[]): chrome.tabs.Tab[] {
   return extras;
 }
 export { duplicateExtras };
+const workspaceSourceSchema = z.array(z.object({ id: z.number().int(), windowId: z.number().int(), index: z.number().int(), pendingUrl: z.string().max(4000).optional() }).strict()).min(1).max(100);
+const workspaceChangeSchema = z.object({ expected: workspaceSchema, proposed: workspaceSnapshotSchema, source: workspaceSourceSchema.optional() }).strict();
+const snapshotContent = (snapshot: WorkspaceSnapshot): string => JSON.stringify(workspaceSnapshotSchema.parse({ ...snapshot, createdAt: 0 }));
+async function captureWorkspace(context: TargetContext): Promise<{ snapshot: WorkspaceSnapshot; source: z.infer<typeof workspaceSourceSchema> }> {
+  const readTabs = async (): Promise<chrome.tabs.Tab[]> => context.tabIds ? contextTabs(context) : (await chrome.tabs.query({ windowId: context.windowId })).sort((a, b) => a.index - b.index);
+  const sourceState = (tabs: chrome.tabs.Tab[]): string => JSON.stringify(tabs.filter(tab => usable(tab.url)).map(tab => ({ id: tab.id, windowId: tab.windowId, index: tab.index, url: tab.url, pendingUrl: tab.pendingUrl, title: tab.title, active: tab.active, pinned: tab.pinned, groupId: tab.groupId })));
+  const tabs = await readTabs(); const groups = await chrome.tabGroups.query({});
+  // Group metadata is a separate Chrome read. Re-read tabs after that wait so
+  // navigation, removal, movement, or regrouping cannot validate an old source.
+  const confirmed = await readTabs().catch(() => { throw new Error('The source tabs changed while capturing this workspace. Ask again to review the current tabs.'); });
+  if (sourceState(tabs) !== sourceState(confirmed)) throw new Error('The source tabs changed while capturing this workspace. Ask again to review the current tabs.');
+  const saved = confirmed.filter(tab => usable(tab.url));
+  if (!saved.length) throw new Error('There are no web pages to save in this workspace.');
+  if (saved.length > 100) throw new Error('Save at most 100 web tabs in a workspace. Select a smaller set of tabs first.');
+  const savedGroups = groups.filter(group => saved.some(tab => !tab.pinned && tab.groupId === group.id)).sort((a, b) => saved.findIndex(tab => tab.groupId === a.id) - saved.findIndex(tab => tab.groupId === b.id));
+  const activeTabIndex = saved.findIndex(tab => tab.active && tab.windowId === context.windowId);
+  const snapshot = workspaceSnapshotSchema.parse({
+    createdAt: Date.now(), ...(activeTabIndex >= 0 ? { activeTabIndex } : {}),
+    groups: savedGroups.map(group => ({ id: `group-${group.id}`, title: (group.title ?? '').slice(0, 100), color: group.color, collapsed: group.collapsed })),
+    tabs: saved.map(tab => {
+      const group = savedGroups.find(group => group.id === tab.groupId);
+      return { url: tab.url!, title: (tab.title ?? '').slice(0, 300), pinned: tab.pinned, ...(group ? { groupId: `group-${group.id}`, group: (group.title ?? '').slice(0, 100), color: group.color } : {}) };
+    }),
+  });
+  return { snapshot, source: workspaceSourceSchema.parse(saved.map(tab => ({ id: tab.id, windowId: tab.windowId, index: tab.index, ...(tab.pendingUrl ? { pendingUrl: tab.pendingUrl } : {}) }))) };
+}
+async function changeWorkspace(workspace: Workspace, operation: 'update' | 'recover', context: TargetContext, env: ExecutionEnvironment): Promise<string> {
+  const key = `workspace:${operation}:${workspace.id}`; const choice = env.overrides[key];
+  if (choice) {
+    delete env.overrides[key];
+    if (choice.value === 'keep') return `Kept the saved version of ${workspace.name}`;
+    let change: z.infer<typeof workspaceChangeSchema>;
+    try { change = workspaceChangeSchema.parse(JSON.parse(choice.value ?? '') as unknown); }
+    catch { throw new Error('That workspace update expired. Ask to update or recover it again.'); }
+    if (change.expected.id !== workspace.id || (operation === 'update' && !change.source)) throw new Error('That workspace update expired. Ask again.');
+    await replaceWorkspace(change.expected, change.proposed, async () => {
+      checkCancelled(env.signal);
+      if (operation === 'update') {
+        const current = await captureWorkspace(context);
+        if (JSON.stringify(current.source) !== JSON.stringify(change.source) || snapshotContent(current.snapshot) !== snapshotContent(change.proposed)) throw new Error('The source tabs changed after the question appeared. Ask to update the workspace again to review the current tabs.');
+      }
+      checkCancelled(env.signal);
+    });
+    env.library = await getLibrary(); markIrreversible(env);
+    return `${operation === 'update' ? 'Updated' : 'Recovered the previous saved version of'} ${workspace.name} · ${change.proposed.tabs.length} tabs. The replaced version is available to recover.`;
+  }
+  if (operation === 'recover' && !workspace.previous) throw new Error(`There is no previous saved version of ${workspace.name} to recover.`);
+  const captured = operation === 'update' ? await captureWorkspace(context) : undefined;
+  const proposed = captured?.snapshot ?? workspace.previous!;
+  checkCancelled(env.signal);
+  if (operation === 'update' && snapshotContent(proposed) === snapshotContent(workspaceSnapshot(workspace))) return `${workspace.name} already contains these ${proposed.tabs.length} saved tabs. Its previous version is unchanged.`;
+  const prompt = operation === 'update'
+    ? `Replace “${workspace.name}” (${workspace.tabs.length} saved tabs) with these ${proposed.tabs.length} tabs? The current saved version will remain recoverable.`
+    : `Recover the previous saved version of “${workspace.name}” (${proposed.tabs.length} tabs), replacing the current ${workspace.tabs.length} saved tabs? Open tabs stay as they are.`;
+  throw new ChoiceRequired(prompt, [
+    { id: 'replace', label: operation === 'update' ? `Update with these ${proposed.tabs.length} tabs` : `Recover the previous ${proposed.tabs.length} tabs`, detail: ['Proposed saved version:', ...workspaceSnapshotDetails(proposed)].join('\n'), value: JSON.stringify({ expected: workspace, proposed, ...(captured ? { source: captured.source } : {}) }) },
+    { id: 'keep', label: 'Keep the current saved version', value: 'keep' },
+  ], 'workspace', key);
+}
+async function renameSavedWorkspace(workspace: Workspace, name: string | undefined, env: ExecutionEnvironment): Promise<string> {
+  const key = `workspace:rename:${workspace.id}`; const expectedKey = `${key}:expected`; const nameKey = `name:${key}`;
+  if (Object.keys(env.overrides).some(item => item.startsWith('workspace:rename:') && item.endsWith(':expected') && item !== expectedKey)) throw new Error('This saved workspace changed after the question appeared. Ask to rename it again.');
+  let expected = workspace;
+  const captured = env.overrides[expectedKey]?.value;
+  if (captured) {
+    try { expected = workspaceSchema.parse(JSON.parse(captured) as unknown); }
+    catch { throw new Error('That workspace name question expired. Ask to rename it again.'); }
+    if (expected.id !== workspace.id) throw new Error('That workspace name question expired. Ask to rename it again.');
+  }
+  const newName = name ?? env.overrides[nameKey]?.value;
+  if (newName === undefined) {
+    env.overrides[expectedKey] = { id: workspace.id, label: workspace.name, value: JSON.stringify(expected) };
+    throw new ChoiceRequired(`What should the “${workspace.name}” workspace be called?`, [], 'name', nameKey);
+  }
+  delete env.overrides[expectedKey]; delete env.overrides[nameKey];
+  await renameWorkspace(expected, newName, () => { checkCancelled(env.signal); });
+  env.library = await getLibrary(); markIrreversible(env);
+  return `Renamed ${workspace.name} workspace to ${newName.trim()}. Its saved tabs and previous version are unchanged.`;
+}
+async function discardWorkspaceHistory(workspace: Workspace, env: ExecutionEnvironment): Promise<string> {
+  const key = `workspace:discard_previous:${workspace.id}`; const choice = env.overrides[key];
+  if (Object.keys(env.overrides).some(item => item.startsWith('workspace:discard_previous:') && item !== key)) throw new Error('This saved workspace changed after the question appeared. Ask to discard its previous version again.');
+  if (choice) {
+    delete env.overrides[key];
+    if (choice.value === 'keep') return `Kept the previous saved version of ${workspace.name}`;
+    let expected: Workspace;
+    try { expected = workspaceSchema.parse(JSON.parse(choice.value ?? '') as unknown); }
+    catch { throw new Error('That workspace history question expired. Ask again.'); }
+    if (expected.id !== workspace.id) throw new Error('That workspace history question expired. Ask again.');
+    await discardPreviousWorkspace(expected, () => { checkCancelled(env.signal); });
+    env.library = await getLibrary(); markIrreversible(env);
+    return `Discarded the previous saved version of ${workspace.name}. Its ${workspace.tabs.length} current saved tabs and open tabs are unchanged.`;
+  }
+  if (!workspace.previous) throw new Error(`There is no previous saved version of ${workspace.name} to discard.`);
+  checkCancelled(env.signal);
+  throw new ChoiceRequired(`Discard the previous saved version of “${workspace.name}” (${workspace.previous.tabs.length} tabs)? Its ${workspace.tabs.length} current saved tabs and open tabs stay as they are. The discarded version cannot be recovered afterward.`, [
+    { id: 'discard', label: 'Discard the previous saved version', detail: ['Previous saved version to discard:', ...workspaceSnapshotDetails(workspace.previous)].join('\n'), value: JSON.stringify(workspace) },
+    { id: 'keep', label: 'Keep the previous saved version', value: 'keep' },
+  ], 'workspace', key);
+}
 export async function executeFeature(action: ChromeAction, context: TargetContext, env: ExecutionEnvironment): Promise<FeatureResult> {
   checkCancelled(env.signal);
   const done = (text: string, next = context): FeatureResult => ({ text, context: next });
@@ -330,25 +438,22 @@ export async function executeFeature(action: ChromeAction, context: TargetContex
     }
     case 'workspace_action': {
       if (action.params.operation === 'list') return done(env.library.workspaces.length ? `Saved workspaces: ${env.library.workspaces.map(item => item.name).join(', ')}. Say “restore Research workspace”.` : 'No workspaces saved yet. Say “save this workspace as Research”.');
+      const sourceContext = action.params.scope === 'window' ? { tabId: context.tabId, windowId: context.windowId } : action.params.scope === 'selection' ? { ...context, tabIds: context.tabIds ?? [context.tabId] } : context;
+      if (['save', 'update', 'recover', 'rename', 'discard_previous'].includes(action.params.operation)) env.library = await getLibrary();
       if (action.params.operation === 'save') {
         const name = action.params.name ?? env.overrides['name:workspace']?.value;
         if (!name) throw new ChoiceRequired('What should this workspace be called?', [], 'name', 'name:workspace');
-        const tabs = context.tabIds ? await contextTabs(context) : await chrome.tabs.query({ windowId: context.windowId });
-        const groups = await chrome.tabGroups.query({}); const saved = tabs.filter(tab => usable(tab.url));
-        if (!saved.length) throw new Error('There are no web pages to save in this workspace.');
-        const savedGroups = groups.filter(group => saved.some(tab => !tab.pinned && tab.groupId === group.id));
-        const activeTabIndex = saved.findIndex(tab => tab.active && tab.windowId === context.windowId);
-        const workspace: Workspace = {
-          id: crypto.randomUUID(), name, createdAt: Date.now(), ...(activeTabIndex >= 0 ? { activeTabIndex } : {}),
-          groups: savedGroups.map(group => ({ id: `group-${group.id}`, title: (group.title ?? '').slice(0, 100), color: group.color, collapsed: group.collapsed })),
-          tabs: saved.map(tab => {
-            const group = savedGroups.find(group => group.id === tab.groupId);
-            return { url: tab.url!, title: (tab.title ?? '').slice(0, 300), pinned: tab.pinned, ...(group ? { groupId: `group-${group.id}`, group: (group.title ?? '').slice(0, 100), color: group.color } : {}) };
-          }),
-        };
-        await saveWorkspace(workspace); env.library = await getLibrary(); markIrreversible(env); return done(`Saved ${saved.length} tabs as ${name}`);
+        const existing = env.library.workspaces.find(workspace => normalizeName(workspace.name) === normalizeName(name));
+        if (Object.keys(env.overrides).some(key => key.startsWith('workspace:update:') && key !== `workspace:update:${existing?.id}`)) throw new Error('This saved workspace changed after the question appeared. Ask to save it again.');
+        if (existing) return done(await changeWorkspace(existing, 'update', sourceContext, env));
+        const { snapshot } = await captureWorkspace(sourceContext);
+        const workspace: Workspace = { ...snapshot, id: crypto.randomUUID(), name };
+        checkCancelled(env.signal); await saveWorkspace(workspace, () => { checkCancelled(env.signal); }); env.library = await getLibrary(); markIrreversible(env); return done(`Saved ${snapshot.tabs.length} tabs as ${name}`);
       }
       const workspace = named(env.library.workspaces, action.params.name ?? '', 'workspace', env);
+      if (action.params.operation === 'rename') return done(await renameSavedWorkspace(workspace, action.params.new_name, env));
+      if (action.params.operation === 'discard_previous') return done(await discardWorkspaceHistory(workspace, env));
+      if (action.params.operation === 'update' || action.params.operation === 'recover') return done(await changeWorkspace(workspace, action.params.operation, sourceContext, env));
       const opened: chrome.tabs.Tab[] = [];
       try {
         const first = workspace.tabs[0]!; const created = await chrome.windows.create({ url: first.url, focused: true });

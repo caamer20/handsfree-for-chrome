@@ -7,8 +7,11 @@ import type { ActiveRequest, CaptureSession, LogEntry, PendingPlan } from '../co
 import { MAX_LOG_ENTRIES } from '../common/constants';
 import { emptyConversation, type Conversation, type Question } from '../common/conversation';
 import { macrosSchema, upsertMacro, type Macro } from '../common/macros';
+import { withLibraryWrite } from './library-write';
+import { routinesSchema } from '../common/routine-schema';
+import { matchRoutine } from '../common/routines';
 
-export interface SessionState { recovery: RecoveryPlan | null; voiceSetup: VoiceSetup | null; transcript: string | null; progress: ExecutionProgress | null; active: ActiveRequest | null; capture: CaptureSession | null; pending: PendingPlan | null; question: Question | null; conversation: Conversation; permissionTabId: number | null; hud: HudState; hudTabId: number | null; lastActivity: number; }
+export interface SessionState { decisionReadback?: { decisionId: string; readbackId?: string; page: number; totalPages: number; text: string }; recovery: RecoveryPlan | null; voiceSetup: VoiceSetup | null; transcript: string | null; progress: ExecutionProgress | null; active: ActiveRequest | null; capture: CaptureSession | null; pending: PendingPlan | null; question: Question | null; conversation: Conversation; permissionTabId: number | null; hud: HudState; hudTabId: number | null; lastActivity: number; }
 export const defaultSession: SessionState = { recovery: null, voiceSetup: null, transcript: null, progress: null, active: null, capture: null, pending: null, question: null, conversation: emptyConversation(), permissionTabId: null, hud: { phase: 'idle', text: 'Ready when you are' }, hudTabId: null, lastActivity: 0 };
 export async function getSettings(): Promise<Settings> {
   const { settings } = await chrome.storage.local.get('settings');
@@ -20,10 +23,14 @@ export async function getMacros(): Promise<Macro[]> {
   return macrosSchema.parse(macros ?? []);
 }
 export async function saveMacro(macro: Macro): Promise<void> {
-  await chrome.storage.local.set({ macros: upsertMacro(await getMacros(), macro) });
+  await withLibraryWrite(async () => {
+    const { routines } = await chrome.storage.local.get('routines');
+    if (matchRoutine(routinesSchema.parse(routines ?? []), macro.phrase)) throw new Error('A routine already uses that spoken phrase. Choose another.');
+    await chrome.storage.local.set({ macros: upsertMacro(await getMacros(), macro) });
+  });
 }
 export async function deleteMacro(id: string): Promise<void> {
-  await chrome.storage.local.set({ macros: (await getMacros()).filter(macro => macro.id !== id) });
+  await withLibraryWrite(async () => { await chrome.storage.local.set({ macros: (await getMacros()).filter(macro => macro.id !== id) }); });
 }
 export async function getSession(): Promise<SessionState> {
   const { session } = await chrome.storage.session.get('session');

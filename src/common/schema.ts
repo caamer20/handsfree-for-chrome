@@ -37,7 +37,7 @@ export const actionsSchema = z.array(actionSchema).min(1).max(8).superRefine((ac
       if (p.operation === 'field_ready') require(false, 'Field readiness is used internally by wait_for_field');
       if (p.operation === 'find') require(!!p.query, 'Find needs search text');
       if (p.operation === 'go_heading' || p.operation === 'go_landmark') require(!!p.query || p.index !== undefined, 'Choose a heading or page region by name or number');
-      if (p.operation === 'select_text' || p.operation === 'replace_text') {
+      if (['select_text', 'replace_text', 'cursor_before', 'cursor_after'].includes(p.operation)) {
         require(!!p.query, 'Choose the text to edit');
         require(p.index === undefined, 'Text editing uses the focused field, not a numbered target');
       }
@@ -94,6 +94,13 @@ export const hudSchema = z.object({
 export type HudState = z.infer<typeof hudSchema>;
 
 export const messageSchema = z.discriminatedUnion('type', [
+  z.object({ target: z.literal('offscreen'), type: z.literal('CANCEL_DECISION_AUDIO') }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('LISTEN_DECISION'), decisionId: z.string().uuid() }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('READ_DECISION'), decisionId: z.string().uuid(), direction: z.enum(['repeat', 'next', 'previous']) }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('DECISION_LISTENING_ERROR'), sessionId: z.string().uuid(), decisionId: z.string().uuid(), error: text }).strict(),
+  z.object({ target: z.literal('background'), type: z.literal('READBACK_FINISHED'), readbackId: z.string().uuid(), error: text.optional() }).strict(),
+  z.object({ target: z.literal('offscreen'), type: z.literal('START_DECISION_LISTENING'), sessionId: z.string().uuid(), decisionId: z.string().uuid(), settings: settingsSchema }).strict(),
+  z.object({ target: z.literal('offscreen'), type: z.literal('SPEAK_READBACK'), readbackId: z.string().uuid(), segments: z.array(z.string().min(1).max(400)).min(1).max(4) }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('EXPORT_LIBRARY_BACKUP') }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('PREVIEW_LIBRARY_BACKUP'), json: z.string().min(1).max(5 * 1024 * 1024) }).strict(),
   z.object({ target: z.literal('background'), type: z.literal('IMPORT_LIBRARY_BACKUP'), json: z.string().min(1).max(5 * 1024 * 1024) }).strict(),

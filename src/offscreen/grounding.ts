@@ -12,10 +12,10 @@ export function validateGrounding(actions: ChromeAction[], transcript: string): 
   if (isNegatedCommand(transcript)) throw new Error('This command asks not to act. No changes were made.');
   const source = normalize(transcript);
   let strictSource: ChromeAction[] | undefined; let nextStrict = 0;
-  const matchesExplicitPageCommand = (action: Extract<ChromeAction, { action: 'page_action' }>): boolean => {
+  const matchesExplicitCommand = (action: ChromeAction): boolean => {
     if (!strictSource) { try { strictSource = parseCommand(transcript) ?? []; } catch { strictSource = []; } }
     for (let index = nextStrict; index < strictSource.length; index++) {
-      const expected = strictSource[index]; if (expected?.action !== 'page_action') continue;
+      const expected = strictSource[index]; if (expected?.action !== action.action) continue;
       const actualParams = action.params as Record<string, unknown>; const expectedParams = expected.params as Record<string, unknown>;
       if ([...new Set([...Object.keys(actualParams), ...Object.keys(expectedParams)])].every(key => actualParams[key] === expectedParams[key])) { nextStrict = index + 1; return true; }
     }
@@ -27,9 +27,10 @@ export function validateGrounding(actions: ChromeAction[], transcript: string): 
   };
   for (const action of actions) {
     if (action.action === 'page_action') {
-      if (['select_text', 'replace_text'].includes(action.params.operation) && !matchesExplicitPageCommand(action)) throw new Error('The AI changed the text-editing command. Say “select text…” or “replace text…with…” using the exact text.');
-      if (['go_heading', 'go_landmark'].includes(action.params.operation) && action.params.index !== undefined && !matchesExplicitPageCommand(action)) throw new Error('The AI added or changed a page destination number. Say the heading or page region’s displayed number explicitly.');
+      if (['select_text', 'replace_text', 'cursor_before', 'cursor_after'].includes(action.params.operation) && !matchesExplicitCommand(action)) throw new Error('The AI changed the text-editing command. Say “select text…” or “replace text…with…” using the exact text.');
+      if (['go_heading', 'go_landmark'].includes(action.params.operation) && action.params.index !== undefined && !matchesExplicitCommand(action)) throw new Error('The AI added or changed a page destination number. Say the heading or page region’s displayed number explicitly.');
     }
+    if (action.action === 'workspace_action' && action.params.operation === 'rename' && !matchesExplicitCommand(action)) throw new Error('The AI changed the workspace rename. Say “rename Research workspace to Physics” with the exact new name.');
     const slots: string[] = [];
     switch (action.action) {
       case 'browser_page': slots.push(action.params.page); break;
@@ -40,7 +41,7 @@ export function validateGrounding(actions: ChromeAction[], transcript: string): 
       case 'select_tabs': slots.push(...action.params.queries); break;
       case 'wait_for_field': case 'move_beside': slots.push(action.params.query); break;
       case 'page_action': if (action.params.query) slots.push(action.params.query); if (action.params.text) slots.push(action.params.text); break;
-      case 'workspace_action': if (action.params.name) slots.push(action.params.name); break;
+      case 'workspace_action': if (action.params.name) slots.push(action.params.name); if (action.params.new_name) slots.push(action.params.new_name); break;
       case 'reference_tabs': case 'audio_action': case 'reading_action': if (action.params.query) slots.push(action.params.query); break;
     }
     if (slots.some(slot => !grounded(slot))) throw new Error('The AI added a name, label, or text you did not say. Try the command with the exact words.');

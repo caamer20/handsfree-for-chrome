@@ -23,7 +23,7 @@ test('exports the saved library and reviews a merge without copying device setti
   await control.getByRole('button', { name: 'Export library', exact: true }).click();
   const download = await downloadPromise; const path = await download.path(); expect(path).toBeTruthy();
   const json = await readFile(path!, 'utf8'); const backup = JSON.parse(json);
-  expect(backup.format).toBe('handsfree-library'); expect(backup.version).toBe(1);
+  expect(backup.format).toBe('handsfree-library'); expect(backup.version).toBe(2);
   for (const kind of ['aliases', 'macros', 'routines', 'workspaces']) expect(backup[kind]).toHaveLength(1);
   expect(json).not.toContain('must-never-appear-in-export'); expect(json).not.toContain('private fixture activity');
   expect(backup.settings).toBeUndefined(); expect(backup.suggestions).toBeUndefined();

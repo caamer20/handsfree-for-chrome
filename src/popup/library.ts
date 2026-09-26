@@ -41,7 +41,8 @@ export class LibraryPanel {
   private async run(text: string): Promise<void> { if (await this.perform({ target: 'background', type: 'RUN_TEXT', text })) this.showControl(); }
   render(state: AppState): void {
     const library = state.library ?? { aliases: [], workspaces: [], suggestions: [] };
-    const key = JSON.stringify([library, state.settings.learnTopSites, state.listening, state.hud.phase === 'thinking']);
+    const workspaceBusy = state.listening || state.hud.phase === 'thinking' || !!state.pending || !!state.question;
+    const key = JSON.stringify([library, state.settings.learnTopSites, workspaceBusy]);
     if (key === this.renderKey) return;
     this.renderKey = key;
     const aliases = el('alias-list'); aliases.replaceChildren();
@@ -64,8 +65,19 @@ export class LibraryPanel {
       for (const tab of workspace.tabs) { const item = document.createElement('li'); item.textContent = `${tab.pinned ? 'Pinned · ' : ''}${tab.group ? tab.group + ' · ' : ''}${tab.title || tab.url}`; item.title = tab.url; list.append(item); }
       details.append(list); const actions = document.createElement('div'); actions.className = 'button-row';
       const restore = button('Restore in new window', () => { void this.perform({ target: 'background', type: 'RESTORE_WORKSPACE', id: workspace.id }).then(ok => { if (ok) this.showControl(); }); });
-      restore.disabled = state.listening || state.hud.phase === 'thinking';
-      actions.append(restore, button('Delete', () => { void this.perform({ target: 'background', type: 'DELETE_WORKSPACE', id: workspace.id }); }));
+      const update = button('Update from this window', () => { void this.run(`update ${workspace.id} workspace from this window`); });
+      const rename = button('Rename', () => { void this.run(`rename ${workspace.id} workspace`); });
+      restore.disabled = workspaceBusy; update.disabled = workspaceBusy; rename.disabled = workspaceBusy;
+      actions.append(restore, update, rename);
+      if (workspace.previous) {
+        const previous = document.createElement('details'); const label = document.createElement('summary'); label.textContent = `Previous saved version · ${workspace.previous.tabs.length} tabs`;
+        const saved = document.createElement('ol'); saved.className = 'macro-sites';
+        for (const tab of workspace.previous.tabs) { const item = document.createElement('li'); item.textContent = `${tab.pinned ? 'Pinned · ' : ''}${tab.group ? tab.group + ' · ' : ''}${tab.title || tab.url}`; item.title = tab.url; saved.append(item); }
+        previous.append(label, saved); details.append(previous);
+        const recover = button('Recover previous saved version', () => { void this.run(`recover ${workspace.id} workspace`); }); recover.disabled = workspaceBusy; actions.append(recover);
+        const discard = button('Discard previous saved version', () => { void this.run(`discard previous version of ${workspace.id} workspace`); }); discard.disabled = workspaceBusy; actions.append(discard);
+      }
+      actions.append(button('Delete', () => { void this.perform({ target: 'background', type: 'DELETE_WORKSPACE', id: workspace.id }); }));
       node.append(details, actions); workspaces.append(node);
     }
     for (const [category, label] of Object.entries(CATEGORY_LABELS)) {
