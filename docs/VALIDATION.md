@@ -7,11 +7,13 @@ Executed September 26, 2026 UTC on macOS x64 with Node 24.2.0 and Chrome for Tes
 | Check | Result |
 | --- | --- |
 | Final application suite | 845 passing tests across 30 files. |
-| Installed extension, excluding two locally blocked audio setup cases | 60 passing tests before the final two edge-case regressions; final reviewed-source rerun in progress. Covered journeys include writing, navigation, punctuation, backup/import, workspace fidelity, and revoked-access regressions. |
-| TypeScript, ESLint, standard MV3/CSP/asset checks | Passed. |
+| Installed extension, excluding two locally blocked audio setup cases | 62 passing tests, including writing, navigation, punctuation, backup/import, stable multi-tab moves and undo, workspace fidelity, and revoked-access regressions. |
+| TypeScript, ESLint, both editions’ MV3/CSP/asset checks | Passed. |
+| Repeated native surface checks | All 15 checks passed across five repetitions after the pointer-readiness fix. |
+| Optional edition installed smoke | Both installation/typed-command and persisted-preference checks passed with AI off. |
 | Production dependency audit | Zero reported vulnerabilities. |
 | Published 1.7 and 1.8 upgrade journeys | Both passed using verified published ZIPs, including library/preferences after reload and browser restart. |
-| Fresh-host Linux/macOS/Windows suite | Pending CI. The two audio setup cases remain enabled. |
+| Fresh-host Linux/macOS/Windows suite | All 64 browser cases passed on each platform in initial runs. A duplicate Linux run missed one opening side-panel click; its fixture now waits for stable, visible, hit-testable coordinates. The upgrade download tag is corrected. Final complete CI rerun pending. |
 | Optional local-model quality | Recorded native-q8 benchmark remains 0/12 exact plans. No expectations or model validation were weakened. |
 
 This record will be updated as release verification completes. A passing typed command or synthetic SpeechRecognition event is not measured human voice accuracy.
@@ -32,9 +34,9 @@ No system audio process was restarted, and no fake readiness signal was substitu
 
 ## Size and performance
 
-The standard development build remains approximately 0.55 MiB unpacked with no model weights/runtime. Final archive sizes and checksums are recorded after packaging.
+The standard archive is 199,311 bytes (579,207 bytes unpacked), with no model weights/runtime. The optional local-AI archive is 222,259,608 bytes (377,173,308 bytes unpacked). Both ZIPs passed integrity, version, and package-content checks. [Archive sizes and SHA-256 values](validation/v1.9/packages.json) identify the local installable artifacts; ZIP timestamps mean separately built CI archives may have different hashes.
 
-The [typed-command performance observation](validation/v1.9/performance.json) recorded a 116 ms cold command, 176 ms warm median, 182 ms warm p95 over 20 cycles, and 213,712 bytes of retained offscreen JavaScript heap growth after garbage collection. These observations came from one disposable development session, exclude audio/network recognition, and are not performance guarantees or comparisons with older releases. Heap is not total RSS; engine task duration is not battery use.
+The [typed-command performance observation](validation/v1.9/performance.json) recorded a 117 ms cold command, 178 ms warm median, 183 ms warm p95 over 20 cycles, and 207,036 bytes of retained offscreen JavaScript heap growth after garbage collection. These observations came from one disposable development session, exclude audio/network recognition, and are not performance guarantees or comparisons with older releases. Heap is not total RSS; engine task duration is not battery use.
 
 ## Reproduce
 
@@ -53,6 +55,6 @@ npm run package:local-ai
 For upgrades, set HANDSFREE_UPGRADE_VERSION to 1.7.0 or 1.8.0 and HANDSFREE_UPGRADE_ZIP to that published package, then run npm run test:upgrade. The standard ZIP SHA-256 values are:
 
 - 1.7.0-preview.1: `843275f4e6dc897cb1efccb436568246cb453f3c2d0bf0faeb5b531712b2c239`.
-- 1.8.0: `69813a8cca526bf94da2a847a30ecdf6f554ac794a2294fedaf552c04d46e4e1`.
+- 1.8.0-preview.1: `69813a8cca526bf94da2a847a30ecdf6f554ac794a2294fedaf552c04d46e4e1`.
 
 Real speech accuracy across accents/devices, OS privacy prompts, physical microphone changes, sleep/wake, hardware battery use, paid-provider behavior, and complex third-party editors still need human testing. The optional small model remains experimental; see the retained [1.8 model report](validation/v1.8/model-quality.json) and [manual voice plan](VOICE-TESTING.md).

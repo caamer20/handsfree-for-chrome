@@ -29,7 +29,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download v1.8.0 --repo caamer20/handsfree-for-chrome --pattern handsfree-for-chrome.zip --dir previous/1.8.0
+          gh release download v1.8.0-preview.1 --repo caamer20/handsfree-for-chrome --pattern handsfree-for-chrome.zip --dir previous/1.8.0
           echo '69813a8cca526bf94da2a847a30ecdf6f554ac794a2294fedaf552c04d46e4e1  previous/1.8.0/handsfree-for-chrome.zip' | sha256sum --check
           test "$(wc -c < previous/1.8.0/handsfree-for-chrome.zip)" -eq 182986
           result=0

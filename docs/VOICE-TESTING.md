@@ -55,6 +55,19 @@ Prepare a window with **Start page**, **Research**, and **Notes** tabs; Start pa
 
 Also try “open a new tab, no actually pin this tab”, conflicting recognized candidates, a negated command, and unfinished speech followed by Stop. Confirm literal dictated/search/field text keeps correction-like words as data.
 
+## Version 1.9 journeys
+
+These additions also need real speech and device testing; automated passes do not establish their recognition accuracy.
+
+- In a focused text field, say “select text black holes”, “replace text black holes with neutron stars”, and move the cursor to each end. Repeat with two occurrences, a readonly field, and an editor that rejects input. Ambiguous or refused edits must leave the field unchanged.
+- Dictate at the middle of existing text, then say “scratch that”. Verify the exact earlier value and caret return once. Repeat after manually editing or moving the caret; correction must stop rather than overwrite that newer change. Use “literal scratch that” to enter those words.
+- Compare spoken punctuation off and on with “hello comma world period”, then say “literal comma”. Verify the setting persists and ordinary search or replacement text is unchanged by it.
+- Navigate named headings and page regions, then next/previous destinations. Include a heading containing a link: focus and scrolling must not activate it. Find a phrase spanning bold text; hidden text and unrelated regions must not produce a match.
+- With optional site access as the only grant, number a page or start dictation, revoke access, and try another action. Verify no click or insertion occurs. Distinguish this from Chrome’s independently valid temporary activeTab grant.
+- Save a workspace with a non-first active tab and separate groups sharing a name. Restore it and verify active tab, order, pins, colors, and collapsed states. Say “mute this tab” and then “mute them” to check singular and plural targets.
+- Export an invented library and import it into a disposable profile. Expand the preview to inspect URLs and steps. Cancel once, then import; repeat to check duplicate skips. Verify settings and credentials are not transferred, and no saved routine executes during import.
+- Move several selected tabs right, to the beginning, and to the end; undo each. Repeat at a boundary and after a manual rearrangement. Say Stop during a multi-step action and recover an eligible failure by voice; completed work must not replay.
+
 ## Long-session performance and battery
 
 The automated performance test records a cold typed command, 20 warm cycles, retained offscreen JavaScript heap after GC, and engine task duration. It cannot establish whole-process/GPU memory or battery consumption.

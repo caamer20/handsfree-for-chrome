@@ -11,7 +11,7 @@ if (!['1.7.0', '1.8.0'].includes(sourceVersion)) throw new Error('HANDSFREE_UPGR
 const test = base.extend({
   extensionPath: async ({ browserName }, use) => {
     expect(browserName).toBe('chromium');
-    if (!process.env.HANDSFREE_UPGRADE_ZIP) throw new Error(`Set HANDSFREE_UPGRADE_ZIP to the published ${sourceVersion === '1.7.0' ? 'v1.7.0-preview.1' : 'v1.8.0'} ZIP.`);
+    if (!process.env.HANDSFREE_UPGRADE_ZIP) throw new Error(`Set HANDSFREE_UPGRADE_ZIP to the published ${sourceVersion === '1.7.0' ? 'v1.7.0-preview.1' : 'v1.8.0-preview.1'} ZIP.`);
     const root = await mkdtemp(join(tmpdir(), 'handsfree-upgrade-'));
     try {
       await promisify(execFile)('unzip', ['-q', resolve(process.env.HANDSFREE_UPGRADE_ZIP), '-d', root]);

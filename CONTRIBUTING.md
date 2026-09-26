@@ -43,7 +43,7 @@ The standard edition needs no weights. For the optional edition, run `npm run mo
 
 For native popup/panel geometry on Linux, use `npm run test:browser:headed` in a desktop session or `xvfb-run --auto-servernum npm run test:browser -- --headed` on a server. Headless Chrome can report transient popup viewport geometry independently of the rendered document.
 
-Test upgrades from both published releases. Download `handsfree-for-chrome.zip` from the official `caamer20/handsfree-for-chrome` release `v1.8.0` or `v1.7.0-preview.1` and verify the checksum pinned in the CI workflow. Set `HANDSFREE_UPGRADE_ZIP` to that file and `HANDSFREE_UPGRADE_VERSION` to `1.8.0` (the default) or `1.7.0`, then run `npm run test:upgrade`. Run these sequentially; reports are retained separately under `test-results-upgrade/<version>/`.
+Test upgrades from both published releases. Download `handsfree-for-chrome.zip` from the official `caamer20/handsfree-for-chrome` release `v1.8.0-preview.1` or `v1.7.0-preview.1` and verify the checksum pinned in the CI workflow. Set `HANDSFREE_UPGRADE_ZIP` to that file and `HANDSFREE_UPGRADE_VERSION` to `1.8.0` (the default) or `1.7.0`, then run `npm run test:upgrade`. Run these sequentially; reports are retained separately under `test-results-upgrade/<version>/`.
 
 The test uses each published release’s own settings schema, replaces files at the same unpacked path, and verifies preferences, both routine types, a site nickname, and a legacy workspace after extension reload and browser restart. It checks the destination against the current `package.json` version, retains an existing voice pace, and verifies that dictation punctuation defaults off. See [manual voice testing](docs/VOICE-TESTING.md) for the hardware-dependent checks.
 
