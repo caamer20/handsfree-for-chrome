@@ -31,6 +31,7 @@ import { answerChoice } from './choices';
 import { cancelPage, dictate } from './page-bridge';
 import { isSafeUrl } from '../common/urls';
 import { validateGrounding } from '../offscreen/grounding';
+import type { WorkspaceNames } from '../common/workspace-presentation';
 
 const CAPTURE_ALARM = 'handsfree-capture-heartbeat';
 const executing = new Map<string, AbortController>();
@@ -139,8 +140,8 @@ async function previewRoutine(routine: Routine, request: ActiveRequest, values: 
     return { ok: true, handled: true, pendingReview: true };
   } catch (error) { await finish({ phase: 'error', text: errorText(error) }, request); return { ok: false, error: errorText(error) }; }
 }
-async function trackExecution(request: ActiveRequest, name: string, actions: ChromeAction[]): Promise<(event: ProgressEvent) => Promise<void>> {
-  const update = await prepareProgress(request.id, name, actions);
+async function trackExecution(request: ActiveRequest, name: string, actions: ChromeAction[], workspaces: WorkspaceNames = []): Promise<(event: ProgressEvent) => Promise<void>> {
+  const update = await prepareProgress(request.id, name, actions, workspaces);
   return async event => {
     await update(event);
     if (event.status === 'running') {
@@ -174,7 +175,7 @@ async function executePlan(actions: ChromeAction[], source: 'grammar' | 'model',
   const controller = continuation ?? new AbortController(); executing.set(request.id, controller);
   const env = await environment(request, transcript, overrides, reviewed); env.signal = controller.signal;
   try {
-    env.onProgress = await trackExecution(request, transcript.startsWith('Routine:') ? transcript : 'Browser command', actions);
+    env.onProgress = await trackExecution(request, transcript.startsWith('Routine:') ? transcript : 'Browser command', actions, env.library.workspaces);
     const result = await dispatchActions(actions, context, env);
     checkCancelled(controller.signal); await completed(result, request, transcript);
   } catch (error) {
@@ -482,7 +483,9 @@ async function readDecision(id: string, direction: ReadbackDirection): Promise<R
     const session = await getSession(); const decision = checkedDecision(session, id); checkCancelled(controller.signal);
     if (session.active || session.capture?.decisionId) throw new Error('Finish speaking before reading the decision aloud.');
     const current = session.decisionReadback?.decisionId === id ? session.decisionReadback.page : 0;
-    const result = decisionReadback(session.question, session.pending, current + (direction === 'next' ? 1 : direction === 'previous' ? -1 : 0));
+    const workspaces = session.pending?.actions.some(action => action.action === 'workspace_action') ? (await engineAwait(getLibrary, controller.signal, 'Saved workspace names could not be read. Your decision is still waiting.')).workspaces : [];
+    checkCancelled(controller.signal);
+    const result = decisionReadback(session.question, session.pending, current + (direction === 'next' ? 1 : direction === 'previous' ? -1 : 0), workspaces);
     const readbackId = crypto.randomUUID();
     await setSession({ decisionReadback: { decisionId: id, readbackId, page: result.page, totalPages: result.totalPages, text: result.text } });
     await touch();

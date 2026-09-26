@@ -6,12 +6,14 @@ Executed September 26, 2026 UTC on macOS x64 with Node 24.2.0 and Chrome for Tes
 
 | Check | Result |
 | --- | --- |
-| Application suite | 1,066 passing tests across 35 files. |
-| TypeScript, ESLint, standard MV3/CSP/asset checks | Passed. |
+| Application suite | 1,082 passing tests across 36 files. |
+| TypeScript, ESLint, both editions’ MV3/CSP/asset checks | Passed. |
 | Production dependency audit | Zero reported vulnerabilities. |
-| New installed journeys | Conversation, workspace history, diagnostic download, backup, and phrase-relative caret checks passed. The first full locally runnable suite passed all 71 cases. Final hardening and three additional journeys are being checked in the final regression run. |
-| Final installed regression, both packages, upgrade journeys, and fresh-host CI | Pending the final candidate run. |
-| Optional local-model quality | Updated native-q8 benchmark passed 1/12 exact plans; the single pass was already a prompt example. The other 11 cases failed. The evaluation intentionally returned failure. |
+| New installed journeys | Conversation, workspace history, diagnostic download, backup, and phrase-relative caret checks passed. All 74 locally runnable browser cases passed, followed by four native-surface checks, five native decision-control repeats, and six presentation regressions after the final layout/name changes. |
+| Upgrade journeys | Published 1.7 and 1.8 packages and the preserved 1.9 candidate passed locally, including reload and full browser restart. |
+| Fresh-host CI | Initial candidate: all 76 cases passed on Linux and Windows; macOS passed 75 and missed a Previous-choices pointer click. The widened controls are being checked in the final run. |
+| Both installable packages | Built and packaged; both optional-edition installation/preference smoke checks passed with AI off. |
+| Optional local-model quality | Updated native-q8 benchmark failed all 12 exact-plan cases. The evaluation intentionally returned failure; no expectations or plan validation were weakened. |
 
 A passing typed command or synthetic SpeechRecognition event is not measured human voice accuracy. The final evidence files will identify the exact source revision and outcomes.
 

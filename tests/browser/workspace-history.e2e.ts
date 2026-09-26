@@ -14,6 +14,10 @@ test('reviews workspace replacement and recovers its previous saved version thro
   await control.getByRole('button', { name: 'Workspaces', exact: true }).click();
   await control.getByRole('button', { name: 'Update from this window', exact: true }).click();
   await expect.poll(async () => (await state(control)).question?.prompt).toContain('(3 saved tabs) with these 2 tabs');
+  await expect(control.locator('#last-transcript')).toContainText('update History research workspace from this window');
+  await expect(control.locator('#last-transcript')).not.toContainText(original.id);
+  await expect(control.locator('#progress-steps')).toContainText('update workspace History research');
+  await expect(control.locator('#progress-steps')).not.toContainText(original.id);
   expect((await state(control)).library!.workspaces[0]).toEqual(original);
   await control.getByText('View proposed saved tabs', { exact: true }).click();
   const proposal = control.locator('#question-choices details p');

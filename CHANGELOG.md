@@ -33,7 +33,7 @@
 - Voice settings first, optional AI in Advanced, website-opening macros presented as a routine type, and examples for the current site.
 - Installed-Chrome command, permission, speech-transport, lifecycle, native-surface, performance, and actual prior-release migration tests. Separate 12-case local-model quality report.
 
-Human voice accuracy, physical sleep/wake, microphone-device changes, and hardware battery measurements remain unmeasured. The 1.8 local-model benchmark failed all 12 exact-plan cases. The 1.10 rerun passed only the case already shown as a prompt example; the model remains experimental. See the [current validation record](docs/VALIDATION.md).
+Human voice accuracy, physical sleep/wake, microphone-device changes, and hardware battery measurements remain unmeasured. The 1.10 local-model benchmark failed all 12 exact-plan cases, as did the earlier 1.8 benchmark; the model remains experimental. See the [current validation record](docs/VALIDATION.md).
 
 ## 1.7.0 — Developer preview
 

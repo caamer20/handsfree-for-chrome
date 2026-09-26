@@ -2,6 +2,7 @@ import { describeAction } from './action-labels';
 import { stripRequestFraming } from './language';
 import type { Question } from './conversation';
 import type { PendingPlan } from './types';
+import type { WorkspaceNames } from './workspace-presentation';
 
 export type ReadbackDirection = 'repeat' | 'next' | 'previous';
 export interface DecisionReadback { page: number; totalPages: number; segments: string[]; text: string; }
@@ -25,14 +26,14 @@ function chunks(text: string): string[] {
   }
   return result;
 }
-export function decisionReadback(question: Question | null, pending: PendingPlan | null, requestedPage = 0): DecisionReadback {
+export function decisionReadback(question: Question | null, pending: PendingPlan | null, requestedPage = 0, workspaces: WorkspaceNames = []): DecisionReadback {
   if (!question && !pending) throw new Error('There is no question or command waiting to be read.');
   const rows = question ? [question.prompt, ...question.choices.map((choice, index) => `Option ${index + 1}. ${choice.label}${choice.detail ? `. ${choice.detail}` : ''}`)] : [
     'Review only. Nothing runs until you confirm.',
     ...(pending!.operation === 'close' ? [`Close ${pending!.targets?.length ?? 0} reviewed tabs.`] : pending!.operation === 'open_reading' ? [`Open ${pending!.urls?.length ?? 0} reviewed articles in new tabs.`] : []),
     ...(pending!.targets ?? []).map((target, index) => `Target ${index + 1}. ${target.title}. ${target.url}`),
     ...(pending!.urls ?? []).map((url, index) => `Website ${index + 1}. ${url}`),
-    ...pending!.actions.map((action, index) => `Step ${index + 1}. ${describeAction(action)}`),
+    ...pending!.actions.map((action, index) => `Step ${index + 1}. ${describeAction(action, workspaces)}`),
   ];
   const all = rows.flatMap(chunks);
   const totalPages = Math.max(1, Math.ceil(all.length / 2));

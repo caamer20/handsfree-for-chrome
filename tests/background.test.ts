@@ -502,6 +502,22 @@ it('preserves negation as the literal name of a saved workspace', async () => {
   await request({ target: 'background', type: 'BEGIN_VOICE_COMMAND', sessionId, text: 'do not close tabs', alternatives: ['do not close tabs'] }, 'src/offscreen/offscreen.html');
   expect(local.library).toMatchObject({ workspaces: [expect.objectContaining({ name: 'do not close tabs' })] }); expect(savedSession().question).toBeNull();
 });
+it('labels a Library workspace target by name while preserving raw transcript and exact ID execution', async () => {
+  const id = crypto.randomUUID(); const decoyId = crypto.randomUUID();
+  const workspace = { id, name: 'Research', createdAt: 1, tabs: [{ title: 'Saved', url: 'https://saved.example/', pinned: false }] };
+  local.library = { aliases: [], suggestions: [], workspaces: [workspace, { ...workspace, id: decoyId, name: id }] };
+  const transcript = `rename ${id} workspace`;
+  await request({ target: 'background', type: 'RUN_TEXT', text: transcript });
+  const active = savedSession().active!;
+  await request({ target: 'background', type: 'VOICE_TRANSCRIPT', requestId: active.id, text: transcript, final: true }, 'src/offscreen/offscreen.html');
+  const question = savedSession().question!;
+  expect(question.actions).toEqual([{ action: 'workspace_action', params: { operation: 'rename', name: id } }]);
+  expect(savedSession().progress?.steps[0]?.label).toBe('rename workspace Research');
+  expect(savedSession().transcript).toBe(transcript);
+  await request({ target: 'background', type: 'ANSWER_CLARIFICATION', questionId: question.id, answer: 'Physics' });
+  expect(local.library).toMatchObject({ workspaces: [{ id, name: 'Physics' }, { id: decoyId, name: id }] });
+  expect(create).not.toHaveBeenCalled();
+});
 it('imports routines atomically and refuses collisions between variable and literal phrases', async () => {
   await request({ target: 'background', type: 'SAVE_ROUTINE', routine });
   const valid = { ...routine, id: crypto.randomUUID(), name: 'Second', phrase: 'Another thing' };

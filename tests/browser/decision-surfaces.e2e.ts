@@ -22,6 +22,8 @@ test('keeps paged decision readback and cancellation usable in the native popup'
   await expect.poll(async () => (await state(control)).decisionReadback?.page).toBe(0);
   expect((await state(control)).question).toEqual(question);
   expect(await popup.evaluate('document.documentElement.scrollWidth <= innerWidth')).toBe(true);
+  const layout = await popup.evaluate<{ listenWidth: number; readWidth: number; firstTop: number; nextTop: number }>('({ listenWidth: document.querySelector("#listen-decision").getBoundingClientRect().width, readWidth: document.querySelector("#read-decision").getBoundingClientRect().width, firstTop: document.querySelector("#listen-decision").getBoundingClientRect().top, nextTop: document.querySelector("#next-decision-page").getBoundingClientRect().top })');
+  expect(layout.listenWidth).toBeGreaterThan(100); expect(layout.readWidth).toBeGreaterThan(100); expect(layout.nextTop).toBeGreaterThan(layout.firstTop);
   await popup.screenshot('test-results/native-decision-popup.png');
   await popup.click('#cancel-decision');
   await expect.poll(async () => (await state(control)).question).toBeNull();

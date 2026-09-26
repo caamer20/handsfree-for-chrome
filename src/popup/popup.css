@@ -82,3 +82,4 @@ footer { display: flex; align-items: center; gap: 6px; padding: 13px 24px 16px; 
 .choice-list small { white-space: pre-line; overflow-wrap: anywhere; }
 
 .choice-detail-card{margin-bottom:8px}.choice-detail-card summary{padding:4px 12px 8px;cursor:pointer;font-size:12px;color:#145d4f}.choice-detail-card p{white-space:pre-line;overflow-wrap:anywhere;font-size:12px;line-height:1.5;margin:0;padding:8px 12px;background:#fff;border-radius:8px}
+#decision-controls .button-row{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}#decision-controls .button-row button{grid-column:span 2;min-width:0}#decision-controls #listen-decision,#decision-controls #read-decision{grid-column:span 3}

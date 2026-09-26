@@ -1,9 +1,10 @@
 import { makeProgress, stopProgress, type ExecutionProgress, type ProgressEvent } from '../common/progress';
 import type { ChromeAction } from '../common/schema';
 import { getSession, setSession } from './store';
-export async function prepareProgress(id: string, name: string, actions: ChromeAction[]): Promise<(event: ProgressEvent) => Promise<void>> {
+import type { WorkspaceNames } from '../common/workspace-presentation';
+export async function prepareProgress(id: string, name: string, actions: ChromeAction[], workspaces: WorkspaceNames = []): Promise<(event: ProgressEvent) => Promise<void>> {
   let progress = (await getSession()).progress;
-  if (!progress || progress.id !== id) progress = makeProgress(id, name, actions);
+  if (!progress || progress.id !== id) progress = makeProgress(id, name, actions, workspaces);
   else progress = structuredClone(progress);
   const offset = Math.max(0, progress.steps.length - actions.length);
   for (const step of progress.steps.slice(offset)) if (step.status !== 'completed') { step.status = 'pending'; step.result = undefined; }

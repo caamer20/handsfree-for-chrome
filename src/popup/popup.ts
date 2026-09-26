@@ -13,6 +13,7 @@ import { LibraryPanel } from './library';
 import { LibraryBackupPanel } from './library-backup';
 import { RoutinesPanel } from './routines';
 import { MacrosPanel } from './macros';
+import { workspaceDisplayTranscript } from '../common/workspace-presentation';
 
 let state: AppState | undefined;
 let initialized = false;
@@ -59,7 +60,7 @@ function render(next: AppState): void {
   const localOption = el<HTMLSelectElement>('ai-provider').querySelector<HTMLOptionElement>('option[value="local"]');
   if (localOption) { localOption.disabled = next.localAiAvailable === false; localOption.textContent = next.localAiAvailable === false ? 'Choose a cloud provider…' : 'On-device SmolLM2 · experimental'; }
   el('transcript-card').hidden = !next.transcript;
-  el('last-transcript').textContent = next.transcript ?? '';
+  el('last-transcript').textContent = workspaceDisplayTranscript(next.transcript ?? '', next.library?.workspaces);
   el('current-tab-label').textContent = next.activeTabTitle ? `Tab: ${next.activeTabTitle}` : 'Ready';
   el<HTMLButtonElement>('open-panel').disabled = next.currentWindowId === undefined;
   el<HTMLButtonElement>('panel-stop').disabled = !next.listening && !next.pending && !next.question && !['thinking', 'listening'].includes(next.hud.phase);
@@ -119,7 +120,7 @@ function render(next: AppState): void {
   const plans = el('plan-list'); plans.replaceChildren();
   for (const target of next.pending?.targets ?? []) { const li = document.createElement('li'); li.textContent = target.title; li.title = target.url; plans.append(li); }
   for (const url of next.pending?.urls ?? []) { const li = document.createElement('li'); li.textContent = url; plans.append(li); }
-  next.pending?.actions.forEach(action => { const li = document.createElement('li'); li.textContent = describeAction(action); plans.append(li); });
+  next.pending?.actions.forEach(action => { const li = document.createElement('li'); li.textContent = describeAction(action, next.library?.workspaces); plans.append(li); });
   if (next.question && next.question.id !== lastQuestionId) command.value = '';
   lastQuestionId = next.question?.id ?? null;
   el('clarification').hidden = !next.question;
@@ -165,7 +166,7 @@ function render(next: AppState): void {
     const li = document.createElement('li');
     const result = document.createElement('span'); result.className = item.ok ? 'result' : 'failed'; result.textContent = item.ok ? '✓' : '!'; result.setAttribute('aria-label', item.ok ? 'Completed' : 'Failed');
     const text = document.createElement('span'); text.className = 'log-text'; text.textContent = item.text;
-    if (item.transcript) text.title = item.transcript;
+    if (item.transcript) text.title = workspaceDisplayTranscript(item.transcript, next.library?.workspaces);
     const time = document.createElement('time'); time.dateTime = new Date(item.at).toISOString(); time.textContent = new Date(item.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     li.append(result, text, time); activity.append(li);
   }

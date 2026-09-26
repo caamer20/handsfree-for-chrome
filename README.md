@@ -142,7 +142,7 @@ Please include the extension version, operating system, steps to reproduce, and 
 
 **AI is off by default.** Built-in commands, macros, and routines work without a provider account. You can enable:
 
-- **On-device SmolLM2**, included only in the optional **local-AI edition**. It passed only 1 of 12 exact-plan cases in the current isolated benchmark, and that case was also a prompt example. It remains experimental and can misinterpret unsupported phrasing.
+- **On-device SmolLM2**, included only in the optional **local-AI edition**. It failed all 12 exact-plan cases in the current isolated benchmark. It remains experimental and can misinterpret unsupported phrasing.
 - **Your own cloud provider:** OpenAI, Anthropic Claude, Google Gemini, or an OpenAI-compatible HTTPS API. You supply the model and key; provider charges may apply.
 
 Validated AI plans execute automatically by default. AI tab closures require confirmation, and Settings can require review of every AI command. The extension accepts only its defined actions; it does not execute generated JavaScript.

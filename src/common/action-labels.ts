@@ -1,5 +1,6 @@
 import type { ChromeAction } from './schema';
-export function describeAction(action: ChromeAction): string {
+import { workspaceDisplayName, type WorkspaceNames } from './workspace-presentation';
+export function describeAction(action: ChromeAction, workspaces: WorkspaceNames = []): string {
   switch (action.action) {
     case 'browser_page': return `Open Chrome ${action.params.page}`;
     case 'organize_tabs': return action.params.operation === 'ungroup' ? 'Remove selected tabs from groups' : `Sort ungrouped tabs by ${action.params.operation === 'sort_title' ? 'title' : 'site'} after existing groups; keep pinned tabs first`;
@@ -42,7 +43,10 @@ export function describeAction(action: ChromeAction): string {
       return p.operation.replaceAll('_', ' ') + (p.query ? ` “${p.query}”` : '') + (p.index !== undefined ? ` number ${p.index}` : '') + (p.text !== undefined ? ` with “${p.text}”` : '') + (p.value !== undefined ? ` ${p.relative ? 'by ' : 'to '}${p.value}${p.operation === 'media_volume' ? ' percent' : ' seconds'}` : '') + (p.direction ? ` ${p.direction}` : '');
     }
     case 'group_action': return `${action.params.operation.replaceAll('_', ' ')} group ${action.params.name}${action.params.color ? ` · ${action.params.color}` : action.params.new_name ? ` to ${action.params.new_name}` : ''}`;
-    case 'workspace_action': return action.params.operation === 'discard_previous' ? `Review discarding the previous saved version of ${action.params.name ?? 'a workspace'}` : `${action.params.operation} workspace ${action.params.name ?? ''}${action.params.new_name ? ` to ${action.params.new_name}` : ''}`;
+    case 'workspace_action': {
+      const name = action.params.name === undefined ? '' : action.params.operation === 'save' ? action.params.name : workspaceDisplayName(action.params.name, workspaces);
+      return action.params.operation === 'discard_previous' ? `Review discarding the previous saved version of ${name || 'a workspace'}` : `${action.params.operation} workspace ${name}${action.params.new_name ? ` to ${action.params.new_name}` : ''}`;
+    }
     case 'reading_action': return `${action.params.operation.replaceAll('_', ' ')} in the reading list`;
     case 'audio_action': return action.params.operation === 'mute_others' ? 'Mute other tabs' : 'Find audible tabs';
     case 'duplicates_action': return `${action.params.operation === 'close' ? 'Review and close' : 'Show'} duplicate tabs`;
