@@ -27,6 +27,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 const command = el<HTMLInputElement>('command');
 const isPanel = location.pathname.endsWith('/sidepanel.html');
 document.body.dataset.surface = isPanel ? 'panel' : 'popup';
+document.documentElement.dataset.surface = document.body.dataset.surface;
 el('open-panel').hidden = isPanel;
 el('panel-stop').hidden = !isPanel;
 new DiagnosticsPanel('diagnostics', perform);

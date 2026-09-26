@@ -14,6 +14,7 @@ test('keeps paged decision readback and cancellation usable in the native popup'
   const popup = await ExtensionTarget.attach(control, '/popup.html');
   try {
     await expect.poll(() => popup.evaluate('document.body.dataset.surface')).toBe('popup');
+    expect(await popup.evaluate('getComputedStyle(document.documentElement).width')).toBe('390px');
     await expect.poll(() => popup.evaluate('document.querySelector("#decision-controls").hidden')).toBe(false);
     await popup.click('#read-decision');
     await expect.poll(async () => (await state(control)).decisionReadback?.page).toBe(0);
